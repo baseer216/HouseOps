@@ -12,9 +12,9 @@ DB_PATH = os.getenv("DB_PATH")
 PVE_IP = os.getenv("PVE_IP")
 PVE_TOKEN = os.getenv("PVE_TOKEN_ID")
 PVE_SECRET = os.getenv("PVE_SECRET")
-UNIFI_IP = os.getenv("UNIFI_IP", "10.100.1.1")
+UNIFI_IP = os.getenv("UNIFI_IP", "10.0.0.1")
 UNIFI_API_KEY = os.getenv("UNIFI_API_KEY", "")
-HA_URL = os.getenv("HA_URL", "http://10.100.1.120:8123/api")
+HA_URL = os.getenv("HA_URL", "http://10.0.0.2:8123/api")
 HA_TOKEN = os.getenv("HA_TOKEN", "")
 
 app = FastAPI(title="HouseOPS", version="2.0")
@@ -97,9 +97,9 @@ def fmt_bytes(b):
 # ─── Switches Config ──────────────────────────────────────────
 
 SWITCHES = [
-    {"name": "Core 10G", "ip": "10.100.1.4", "community": "baseer", "model": "10GT080M"},
-    {"name": "Office Desk", "ip": "10.100.1.6", "community": "public", "model": "2G06-04210GSMX"},
-    {"name": "Studio MDF", "ip": "10.100.1.14", "community": "public", "model": "2G06-04210GSMX"},
+    {"name": "Core Switch", "ip": os.getenv("SWITCH_CORE_IP", "10.0.0.10"), "community": os.getenv("SWITCH_CORE_COMM", "public"), "model": "10G Managed"},
+    {"name": "Office Switch", "ip": os.getenv("SWITCH_OFFICE_IP", "10.0.0.11"), "community": os.getenv("SWITCH_OFFICE_COMM", "public"), "model": "2.5G Managed"},
+    {"name": "Studio Switch", "ip": os.getenv("SWITCH_STUDIO_IP", "10.0.0.12"), "community": os.getenv("SWITCH_STUDIO_COMM", "public"), "model": "2.5G Managed"},
 ]
 
 def get_switch_status(sw):

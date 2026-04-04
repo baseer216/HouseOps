@@ -72,16 +72,16 @@ Copy `.env.example` to `.env` and configure:
 
 ```env
 # UniFi Dream Router
-UNIFI_IP=10.100.1.1
+UNIFI_IP=10.0.0.1
 UNIFI_API_KEY=your_api_key_here
 
 # Proxmox
-PVE_IP=10.100.1.253
+PVE_IP=10.0.0.2
 PVE_TOKEN_ID=root@pam!houseops
 PVE_SECRET=your_token_secret
 
 # Home Assistant
-HA_URL=http://10.100.1.120:8123/api
+HA_URL=http://10.0.0.3:8123/api
 HA_TOKEN=your_ha_token
 ```
 

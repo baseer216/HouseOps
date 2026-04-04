@@ -7,9 +7,9 @@ set -e
 VMID=200
 HOSTNAME="houseops"
 PASSWORD="houseops2026"
-IP="10.100.1.200/24"
-GW="10.100.1.1"
-DNS="10.100.1.1"
+IP="10.0.0.200/24"
+GW="10.0.0.1"
+DNS="10.0.0.1"
 MEMORY=2048
 CORES=2
 DISK=16
@@ -17,7 +17,7 @@ STORAGE="local-lvm"
 TEMPLATE="debian-13-standard_13.1-2_amd64.tar.zst"
 
 # UniFi config
-UNIFI_IP="10.100.1.1"
+UNIFI_IP="10.0.0.1"
 UNIFI_KEY="vKBN69Exrt7ud2gHx3iNZvVFh5yZdXEu"
 
 echo "=== HouseOPS LXC Deployment ==="
