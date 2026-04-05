@@ -17,6 +17,12 @@ UNIFI_API_KEY = os.getenv("UNIFI_API_KEY", "")
 HA_URL = os.getenv("HA_URL", "http://10.0.0.2:8123/api")
 HA_TOKEN = os.getenv("HA_TOKEN", "")
 
+UPTIME_KUMA_URL = os.getenv("UPTIME_KUMA_URL", "http://10.100.1.58:3001")
+UPTIME_KUMA_SLUG = os.getenv("UPTIME_KUMA_SLUG", "home")
+PIHOLE_1_IP = os.getenv("PIHOLE_1_IP", "10.100.1.3")
+PIHOLE_2_IP = os.getenv("PIHOLE_2_IP", "10.100.1.101")
+ADGUARD_IP = os.getenv("ADGUARD_IP", "10.100.1.99")
+
 app = FastAPI(title="HouseOPS", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -296,6 +302,115 @@ def get_device_health_summary():
         result.append({"name": dev["name"], "ip": ip, "type": dev["type"], "status": status, "avg_ping_ms": avg_ping, "availability_pct": avail, "http_status": http_status, "ping_samples": len(pings)})
     return result
 
+# ─── Uptime Kuma ──────────────────────────────────────────────
+
+def get_uptime_kuma():
+    try:
+        r = requests.get(f"{UPTIME_KUMA_URL}/api/status-page/heartbeat/{UPTIME_KUMA_SLUG}", timeout=5)
+        r.raise_for_status()
+        data = r.json()
+        monitors = data.get("monitorList", [])
+        result = []
+        for m in monitors:
+            heartbeats = m.get("heartbeatList", {})
+            latest = None
+            for key, beats in heartbeats.items():
+                if beats:
+                    latest = beats[-1]
+                    break
+            result.append({
+                "name": m.get("name", "?"),
+                "status": m.get("status", 0),
+                "uptime_24h": m.get("uptime", 0),
+                "latest_ping": latest.get("ping", None) if latest else None,
+                "url": m.get("url", ""),
+            })
+        return {"monitors": result, "total": len(result), "up": sum(1 for m in result if m["status"] == 1)}
+    except Exception as e:
+        return {"monitors": [], "error": str(e)}
+
+# ─── Pi-hole ──────────────────────────────────────────────────
+
+def get_pihole(ip):
+    try:
+        r = requests.get(f"http://{ip}/admin/api.php?summaryRaw", timeout=5)
+        r.raise_for_status()
+        data = r.json()
+        return {
+            "name": f"Pi-hole ({ip})",
+            "ip": ip,
+            "online": True,
+            "ads_blocked": data.get("ads_blocked_today", 0),
+            "ads_pct": round(data.get("ads_percentage_today", 0), 1),
+            "queries": data.get("dns_queries_today", 0),
+            "blocked": data.get("ads_blocked_today", 0),
+            "domains_blocked": data.get("domains_being_blocked", 0),
+            "status": data.get("status", "unknown"),
+        }
+    except:
+        return {"name": f"Pi-hole ({ip})", "ip": ip, "online": False, "status": "offline"}
+
+# ─── AdGuard Home ─────────────────────────────────────────────
+
+def get_adguard():
+    try:
+        stats = requests.get(f"http://{ADGUARD_IP}/control/stats", timeout=5)
+        status = requests.get(f"http://{ADGUARD_IP}/control/status", timeout=5)
+        if stats.status_code != 200:
+            raise Exception("Not reachable")
+        sd = stats.json()
+        st = status.json()
+        total_q = sd.get("num_dns_queries", 0)
+        blocked_q = sd.get("num_blocked_filtering", 0)
+        blocked_pct = round((blocked_q / total_q * 100) if total_q > 0 else 0, 1)
+        return {
+            "name": f"AdGuard Home ({ADGUARD_IP})",
+            "ip": ADGUARD_IP,
+            "online": True,
+            "ads_blocked": blocked_q,
+            "ads_pct": blocked_pct,
+            "queries": total_q,
+            "blocked": blocked_q,
+            "domains_blocked": sd.get("num_filters", 0),
+            "status": "enabled" if st.get("protection_enabled") else "disabled",
+        }
+    except:
+        return {"name": f"AdGuard Home ({ADGUARD_IP})", "ip": ADGUARD_IP, "online": False, "status": "offline"}
+
+# ─── DNS/Ad Blocking Summary ─────────────────────────────────
+
+@app.get("/api/dns")
+def api_dns():
+    cached = cache.get("dns")
+    if cached is not None:
+        return cached
+    p1 = get_pihole(PIHOLE_1_IP)
+    p2 = get_pihole(PIHOLE_2_IP)
+    ag = get_adguard()
+    total_queries = (p1.get("queries", 0) or 0) + (p2.get("queries", 0) or 0) + (ag.get("queries", 0) or 0)
+    total_blocked = (p1.get("blocked", 0) or 0) + (p2.get("blocked", 0) or 0) + (ag.get("blocked", 0) or 0)
+    total_pct = round((total_blocked / total_queries * 100) if total_queries > 0 else 0, 1)
+    result = {
+        "piholes": [p1, p2],
+        "adguard": ag,
+        "total_queries": total_queries,
+        "total_blocked": total_blocked,
+        "total_blocked_pct": total_pct,
+    }
+    cache.set("dns", result, ttl=15)
+    return result
+
+# ─── Uptime Kuma API ──────────────────────────────────────────
+
+@app.get("/api/uptime-kuma")
+def api_uptime_kuma():
+    cached = cache.get("uptime_kuma")
+    if cached is not None:
+        return cached
+    result = get_uptime_kuma()
+    cache.set("uptime_kuma", result, ttl=10)
+    return result
+
 # ─── Switch Status (instant) ──────────────────────────────────
 
 def get_switch_status(sw):
@@ -369,7 +484,7 @@ def api_dashboard():
     if cached is not None:
         return cached
 
-    result = {"power": {}, "network": {}, "proxmox": {}, "environment": {}}
+    result = {"power": {}, "network": {}, "proxmox": {}, "environment": {}, "dns": {}}
     try:
         entities = ha_get("/states")
         power_entities = [e for e in entities if e.get("attributes", {}).get("unit_of_measurement") == "W"]
@@ -438,6 +553,23 @@ def api_dashboard():
         result["environment"] = {"indoor_temp": temp_sensor}
     except:
         result["environment"] = {"indoor_temp": None}
+    
+    try:
+        p1 = get_pihole(PIHOLE_1_IP)
+        p2 = get_pihole(PIHOLE_2_IP)
+        ag = get_adguard()
+        total_queries = (p1.get("queries", 0) or 0) + (p2.get("queries", 0) or 0) + (ag.get("queries", 0) or 0)
+        total_blocked = (p1.get("blocked", 0) or 0) + (p2.get("blocked", 0) or 0) + (ag.get("blocked", 0) or 0)
+        total_pct = round((total_blocked / total_queries * 100) if total_queries > 0 else 0, 1)
+        result["dns"] = {
+            "piholes": [p1, p2],
+            "adguard": ag,
+            "total_queries": total_queries,
+            "total_blocked": total_blocked,
+            "total_blocked_pct": total_pct,
+        }
+    except:
+        result["dns"] = {"total_queries": 0, "total_blocked": 0, "total_blocked_pct": 0, "piholes": [], "adguard": {}}
     
     cache.set("dashboard", result, ttl=8)
     return result

@@ -163,7 +163,7 @@ async function load(){
   if(refreshController) refreshController.abort();
   refreshController = new AbortController();
   try{
-    const [dash,power,vms,clients,netDevices,storage,water,switches,unifi,unifiClients,latency,insights,devHealth]=await Promise.all([
+    const [dash,power,vms,clients,netDevices,storage,water,switches,unifi,unifiClients,latency,insights,devHealth,dns,uptimeKuma]=await Promise.all([
       fetchWithTimeout(API+'/api/dashboard'),
       fetchWithTimeout(API+'/api/power'),
       fetchWithTimeout(API+'/api/proxmox/vms'),
@@ -176,7 +176,9 @@ async function load(){
       fetchWithTimeout(API+'/api/unifi/clients'),
       fetchWithTimeout(API+'/api/latency').catch(()=>({wan:[],wan1:[]})),
       fetchWithTimeout(API+'/api/insights').catch(()=>({insights:[]})),
-      fetchWithTimeout(API+'/api/device-health').catch(()=>({devices:[]}))
+      fetchWithTimeout(API+'/api/device-health').catch(()=>({devices:[]})),
+      fetchWithTimeout(API+'/api/dns').catch(()=>({piholes:[],adguard:{},total_queries:0,total_blocked:0,total_blocked_pct:0})),
+      fetchWithTimeout(API+'/api/uptime-kuma').catch(()=>({monitors:[],error:null}))
     ]);
 
     document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
@@ -230,16 +232,32 @@ async function load(){
 
       // PROXMOX VMS (only running)
       if(vms.vms&&vms.vms.length){
+        const vmCount=vms.vms.length;
+        const showCompact=vmCount>6;
         let vmHtml='';
-        vms.vms.forEach(v=>{
-          const cpuColor=v.cpu>70?'var(--red)':v.cpu>40?'var(--yellow)':'var(--green)';
-          const memColor=v.mem_pct>80?'var(--red)':v.mem_pct>50?'var(--yellow)':'var(--green)';
-          const diskColor=v.disk_pct>80?'var(--red)':v.disk_pct>50?'var(--yellow)':'var(--green)';
-          const icon=v.type==='lxc'?'📦':'🖥️';
-          const diskGb=(v.disk_total/1073741824).toFixed(1);
-          vmHtml+='<div class="vm-card"><div class="name">'+icon+' '+v.name+'</div><div class="detail">CPU: <span style="color:'+cpuColor+';font-weight:700">'+v.cpu+'%</span> · RAM: <span style="color:'+memColor+';font-weight:700">'+v.mem_pct+'%</span></div><div class="detail">Disk: <span style="color:'+diskColor+';font-weight:700">'+v.disk_pct+'%</span> · '+diskGb+'GB</div><div class="detail">Uptime: '+v.uptime+'</div></div>';
-        });
-        html+=cardWrap('card-vms','📦','Proxmox VMs ('+vms.vms.length+' running)','<div class="vm-grid">'+vmHtml+'</div>');
+        if(showCompact){
+          vmHtml+='<div class="table-scroll"><table class="client-table"><thead><tr>';
+          vmHtml+='<th onclick="_sortVMs(\'name\')">Name<span class="sort-arrow" id="th-vm-name"></span></th>';
+          vmHtml+='<th onclick="_sortVMs(\'cpu\')">CPU<span class="sort-arrow" id="th-vm-cpu"></span></th>';
+          vmHtml+='<th onclick="_sortVMs(\'mem_pct\')">RAM<span class="sort-arrow" id="th-vm-mem_pct"></span></th>';
+          vmHtml+='<th onclick="_sortVMs(\'disk_pct\')">Disk<span class="sort-arrow" id="th-vm-disk_pct"></span></th>';
+          vmHtml+='<th onclick="_sortVMs(\'uptime\')">Uptime<span class="sort-arrow" id="th-vm-uptime"></span></th>';
+          vmHtml+='</tr></thead><tbody id="vmBody"></tbody></table></div>';
+          window._vms=vms.vms;
+          window._vmSort={k:'name',d:false};
+          setTimeout(_renderVMs,100);
+        }else{
+          vms.vms.forEach(v=>{
+            const cpuColor=v.cpu>70?'var(--red)':v.cpu>40?'var(--yellow)':'var(--green)';
+            const memColor=v.mem_pct>80?'var(--red)':v.mem_pct>50?'var(--yellow)':'var(--green)';
+            const diskColor=v.disk_pct>80?'var(--red)':v.disk_pct>50?'var(--yellow)':'var(--green)';
+            const icon=v.type==='lxc'?'📦':'🖥️';
+            const diskGb=(v.disk_total/1073741824).toFixed(1);
+            vmHtml+='<div class="vm-card"><div class="name">'+icon+' '+v.name+'</div><div class="detail">CPU: <span style="color:'+cpuColor+';font-weight:700">'+v.cpu+'%</span> · RAM: <span style="color:'+memColor+';font-weight:700">'+v.mem_pct+'%</span></div><div class="detail">Disk: <span style="color:'+diskColor+';font-weight:700">'+v.disk_pct+'%</span> · '+diskGb+'GB</div><div class="detail">Uptime: '+v.uptime+'</div></div>';
+          });
+          vmHtml='<div class="vm-grid">'+vmHtml+'</div>';
+        }
+        html+=cardWrap('card-vms','📦','Proxmox VMs ('+vmCount+' running)',vmHtml);
       }
 
       // UNIFI
@@ -343,6 +361,55 @@ async function load(){
           iHtml+='<div class="insight-box" style="background:'+(cls==='ok'?'rgba(34,197,94,0.06)':cls==='warn'?'rgba(234,179,8,0.06)':cls==='critical'?'rgba(239,68,68,0.06)':'rgba(59,130,246,0.06)')+';border-color:'+(cls==='ok'?'rgba(34,197,94,0.12)':cls==='warn'?'rgba(234,179,8,0.12)':cls==='critical'?'rgba(239,68,68,0.12)':'rgba(59,130,246,0.12)')+'"><strong>'+(ins.icon||'')+' '+(ins.title||'')+'</strong><br><span style="color:var(--muted)">'+(ins.detail||'')+'</span></div>';
         });
         html+=cardWrap('card-insights','🧠','Network Insights',iHtml,'span-full');
+      }
+
+      // DNS / AD BLOCKING
+      const dnsData=dns||{};
+      const totalQ=dnsData.total_queries||0;
+      const totalB=dnsData.total_blocked||0;
+      const totalPct=dnsData.total_blocked_pct||0;
+      if(totalQ>0||(dnsData.piholes&&dnsData.piholes.length)){
+        let dHtml='';
+        dHtml+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px">';
+        dHtml+='<div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--accent)">'+totalQ.toLocaleString()+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Queries</div></div>';
+        dHtml+='<div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--green)">'+totalB.toLocaleString()+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Blocked</div></div>';
+        dHtml+='<div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--yellow)">'+totalPct+'%</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Blocked %</div></div>';
+        dHtml+='</div>';
+        (dnsData.piholes||[]).forEach(p=>{
+          if(p.online){
+            dHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot online"></span>'+p.name+'</span><span class="stat-value" style="color:'+(p.status==='active'?'var(--green)':'var(--yellow)')+'">'+p.status+'</span></div>';
+            dHtml+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">'+p.ads_blocked+' blocked ('+p.ads_pct+'%)</span><span class="stat-value">'+p.queries.toLocaleString()+' queries</span></div>';
+          }else{
+            dHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot offline"></span>'+p.name+'</span><span class="stat-value" style="color:var(--red)">Offline</span></div>';
+          }
+        });
+        const ag=dnsData.adguard||{};
+        if(ag.online){
+          dHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot online"></span>AdGuard Home</span><span class="stat-value" style="color:'+(ag.status==='enabled'?'var(--green)':'var(--yellow)')+'">'+ag.status+'</span></div>';
+          dHtml+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">'+ag.ads_blocked+' blocked ('+ag.ads_pct+'%)</span><span class="stat-value">'+ag.queries.toLocaleString()+' queries</span></div>';
+        }else if(ag.ip){
+          dHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot offline"></span>AdGuard Home</span><span class="stat-value" style="color:var(--red)">Offline</span></div>';
+        }
+        html+=cardWrap('card-dns','🛡️','DNS / Ad Blocking',dHtml);
+      }
+
+      // UPTIME KUMA
+      if(uptimeKuma&&uptimeKuma.monitors&&uptimeKuma.monitors.length){
+        let ukHtml='';
+        const upCount=uptimeKuma.up||0;
+        const totalCount=uptimeKuma.total||0;
+        ukHtml+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+        ukHtml+='<span class="stat-label">'+upCount+'/'+totalCount+' monitors up</span>';
+        ukHtml+='<span class="badge '+(upCount===totalCount?'online':'offline')+'">'+(upCount===totalCount?'All Up':'Issues')+'</span>';
+        ukHtml+='</div>';
+        uptimeKuma.monitors.forEach(m=>{
+          const statusColor=m.status===1?'var(--green)':m.status===2?'var(--yellow)':'var(--red)';
+          const statusText=m.status===1?'Up':m.status===2?'Pending':'Down';
+          const uptimeColor=m.uptime_24h>=99?'var(--green)':m.uptime_24h>=95?'var(--yellow)':'var(--red)';
+          ukHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot" style="background:'+statusColor+';box-shadow:0 0 3px '+statusColor+'"></span>'+m.name+'</span><span class="stat-value" style="color:'+statusColor+'">'+statusText+'</span></div>';
+          ukHtml+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">24h: <strong style="color:'+uptimeColor+'">'+(m.uptime_24h*100).toFixed(1)+'%</strong></span><span class="stat-value">'+(m.latest_ping?m.latest_ping+'ms':'')+'</span></div>';
+        });
+        html+=cardWrap('card-uptime','⏱️','Uptime Kuma',ukHtml,'span-full');
       }
 
       document.getElementById('dashboard').innerHTML=html;
@@ -461,6 +528,70 @@ async function load(){
         }
       }
 
+      // Update DNS card in-place
+      const dns2=dns||{};
+      if(dns2.total_queries>0){
+        const dnsCard=document.getElementById('card-dns');
+        if(dnsCard){
+          const body3=dnsCard.querySelector('.card-body');
+          if(body3){
+            let dHtml2='';
+            dHtml2+='<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px">';
+            dHtml2+='<div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--accent)">'+dns2.total_queries.toLocaleString()+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Queries</div></div>';
+            dHtml2+='<div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--green)">'+dns2.total_blocked.toLocaleString()+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Blocked</div></div>';
+            dHtml2+='<div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--yellow)">'+dns2.total_blocked_pct+'%</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Blocked %</div></div>';
+            dHtml2+='</div>';
+            (dns2.piholes||[]).forEach(p=>{
+              if(p.online){
+                dHtml2+='<div class="stat-row"><span class="stat-label"><span class="status-dot online"></span>'+p.name+'</span><span class="stat-value" style="color:'+(p.status==='active'?'var(--green)':'var(--yellow)')+'">'+p.status+'</span></div>';
+                dHtml2+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">'+p.ads_blocked+' blocked ('+p.ads_pct+'%)</span><span class="stat-value">'+p.queries.toLocaleString()+' queries</span></div>';
+              }else{
+                dHtml2+='<div class="stat-row"><span class="stat-label"><span class="status-dot offline"></span>'+p.name+'</span><span class="stat-value" style="color:var(--red)">Offline</span></div>';
+              }
+            });
+            const ag2=dns2.adguard||{};
+            if(ag2.online){
+              dHtml2+='<div class="stat-row"><span class="stat-label"><span class="status-dot online"></span>AdGuard Home</span><span class="stat-value" style="color:'+(ag2.status==='enabled'?'var(--green)':'var(--yellow)')+'">'+ag2.status+'</span></div>';
+              dHtml2+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">'+ag2.ads_blocked+' blocked ('+ag2.ads_pct+'%)</span><span class="stat-value">'+ag2.queries.toLocaleString()+' queries</span></div>';
+            }else if(ag2.ip){
+              dHtml2+='<div class="stat-row"><span class="stat-label"><span class="status-dot offline"></span>AdGuard Home</span><span class="stat-value" style="color:var(--red)">Offline</span></div>';
+            }
+            body3.innerHTML=dHtml2;
+          }
+        }
+      }
+
+      // Update Uptime Kuma card in-place
+      if(uptimeKuma&&uptimeKuma.monitors&&uptimeKuma.monitors.length){
+        const ukCard=document.getElementById('card-uptime');
+        if(ukCard){
+          const body4=ukCard.querySelector('.card-body');
+          if(body4){
+            let ukHtml2='';
+            const upCount2=uptimeKuma.up||0;
+            const totalCount2=uptimeKuma.total||0;
+            ukHtml2+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+            ukHtml2+='<span class="stat-label">'+upCount2+'/'+totalCount2+' monitors up</span>';
+            ukHtml2+='<span class="badge '+(upCount2===totalCount2?'online':'offline')+'">'+(upCount2===totalCount2?'All Up':'Issues')+'</span>';
+            ukHtml2+='</div>';
+            uptimeKuma.monitors.forEach(m=>{
+              const statusColor2=m.status===1?'var(--green)':m.status===2?'var(--yellow)':'var(--red)';
+              const statusText2=m.status===1?'Up':m.status===2?'Pending':'Down';
+              const uptimeColor2=m.uptime_24h>=99?'var(--green)':m.uptime_24h>=95?'var(--yellow)':'var(--red)';
+              ukHtml2+='<div class="stat-row"><span class="stat-label"><span class="status-dot" style="background:'+statusColor2+';box-shadow:0 0 3px '+statusColor2+'"></span>'+m.name+'</span><span class="stat-value" style="color:'+statusColor2+'">'+statusText2+'</span></div>';
+              ukHtml2+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">24h: <strong style="color:'+uptimeColor2+'">'+(m.uptime_24h*100).toFixed(1)+'%</strong></span><span class="stat-value">'+(m.latest_ping?m.latest_ping+'ms':'')+'</span></div>';
+            });
+            body4.innerHTML=ukHtml2;
+          }
+        }
+      }
+
+      // Update VMs in-place (compact table)
+      if(vms.vms&&vms.vms.length&&vms.vms.length>6){
+        window._vms=vms.vms;
+        _renderVMs();
+      }
+
       updateExecSummary(dash,power,vms,unifi);
     }
   }catch(e){
@@ -539,6 +670,42 @@ function _renderUC(){
   document.querySelectorAll('[id^="th-"]').forEach(el=>el.textContent='');
   const th=document.getElementById('th-'+window._ucSort.k);
   if(th)th.textContent=window._ucSort.d?' ▲':' ▼';
+}
+
+function _sortVMs(k){
+  if(window._vmSort.k===k)window._vmSort.d=!window._vmSort.d;
+  else{window._vmSort.k=k;window._vmSort.d=k==='name'?false:true}
+  _renderVMs();
+}
+
+function _renderVMs(){
+  if(!window._vms)return;
+  const k=window._vmSort.k,d=window._vmSort.d;
+  let c=window._vms.slice();
+  c.sort(function(a,b){
+    var va=a[k],vb=b[k];
+    va=va||0;vb=vb||0;
+    if(typeof va==='string')return d?vb.localeCompare(va):va.localeCompare(vb);
+    return d?vb-va:va-vb;
+  });
+  const body=document.getElementById('vmBody');
+  if(!body)return;
+  let rows='';
+  c.forEach(function(v){
+    const cpuColor=v.cpu>70?'var(--red)':v.cpu>40?'var(--yellow)':'var(--green)';
+    const memColor=v.mem_pct>80?'var(--red)':v.mem_pct>50?'var(--yellow)':'var(--green)';
+    const diskColor=v.disk_pct>80?'var(--red)':v.disk_pct>50?'var(--yellow)':'var(--green)';
+    const icon=v.type==='lxc'?'📦':'🖥️';
+    const diskGb=(v.disk_total/1073741824).toFixed(1);
+    rows+='<tr><td style="font-weight:600">'+icon+' '+v.name+'</td><td style="color:'+cpuColor+';font-weight:700">'+v.cpu+'%</td><td style="color:'+memColor+';font-weight:700">'+v.mem_pct+'%</td><td style="color:'+diskColor+';font-weight:700">'+v.disk_pct+'% · '+diskGb+'GB</td><td style="color:var(--muted)">'+v.uptime+'</td></tr>';
+  });
+  body.innerHTML=rows;
+  ['name','cpu','mem_pct','disk_pct','uptime'].forEach(function(kk){
+    var el=document.getElementById('th-vm-'+kk);
+    if(el)el.textContent='';
+  });
+  const th=document.getElementById('th-vm-'+window._vmSort.k);
+  if(th)th.textContent=window._vmSort.d?' ▲':' ▼';
 }
 
 setCols(currentCols);
