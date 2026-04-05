@@ -221,7 +221,7 @@ async function load(){
     const totalB=dnsData.total_blocked||0;
     const totalPct=dnsData.total_blocked_pct||0;
     const activeDevices=p.devices||[];
-    const tempSensors=dash.environment?dash.environment.temp_sensors:[];
+    const tempSensors=(dash.environment&&dash.environment.temp_sensors)?dash.environment.temp_sensors:[];
 
     if(firstLoad){
       let html='';
