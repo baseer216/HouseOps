@@ -1,11 +1,13 @@
 # HouseOPS Secure Deploy Script
 # Creates new .env on server from existing config + new variables
+# IMPORTANT: Configure your environment variables below before running
 
 $ErrorActionPreference = "Stop"
 
-$PROXMOX = "root@10.100.1.253"
+# CONFIGURE THESE FOR YOUR ENVIRONMENT
+$PROXMOX = "root@YOUR_PROXMOX_IP"
 $VMID = 200
-$SRC = "C:\Users\user\Documents\VibeCode\starthere\houseops"
+$SRC = "C:\path\to\houseops"
 
 $FILES = @(
     @{ Local = "$SRC\backend\main.py"; Remote = "/opt/houseops/backend/main.py" },
@@ -142,8 +144,9 @@ Write-Host ""
 # Step 4: Verify
 Write-Host "[4/4] Verifying..." -ForegroundColor Yellow
 Start-Sleep -Seconds 3
+$TARGET_IP = "YOUR_LXC_IP"
 try {
-    $r = Invoke-WebRequest -Uri "http://10.100.1.200:8000/" -TimeoutSec 5 -UseBasicParsing
+    $r = Invoke-WebRequest -Uri "http://${TARGET_IP}:8000/" -TimeoutSec 5 -UseBasicParsing
     if ($r.StatusCode -eq 200) {
         Write-Host "  Dashboard: OK" -ForegroundColor Green
     }
@@ -152,7 +155,7 @@ try {
 }
 
 try {
-    $r = Invoke-WebRequest -Uri "http://10.100.1.200:8000/api/dashboard" -TimeoutSec 5 -UseBasicParsing
+    $r = Invoke-WebRequest -Uri "http://${TARGET_IP}:8000/api/dashboard" -TimeoutSec 5 -UseBasicParsing
     if ($r.StatusCode -eq 200) {
         Write-Host "  API: OK" -ForegroundColor Green
     }

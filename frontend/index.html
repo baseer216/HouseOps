@@ -407,13 +407,13 @@ async function load(){
         const wan1Color=wan1Lat<20?'var(--green)':wan1Lat<50?'var(--cyan)':wan1Lat<100?'var(--yellow)':wan1Lat<200?'var(--orange)':'var(--red)';
         let latHtml='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">';
         latHtml+='<div style="background:var(--border);border-radius:8px;padding:10px;text-align:center">';
-        latHtml+='<div style="font-size:0.55rem;color:var(--muted);text-transform:uppercase;margin-bottom:4px">WAN Latency</div>';
+        latHtml+='<div style="font-size:0.55rem;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Comcast Cable</div>';
         latHtml+='<div style="font-size:var(--fs-xl);font-weight:800;color:'+wanColor+'">'+wanLat.toFixed(0)+'ms</div>';
         latHtml+='<div style="font-size:var(--fs-xs);color:var(--muted);margin-top:2px">'+((wanLat<20?'Excellent':wanLat<50?'Good':wanLat<100?'Fair':wanLat<200?'Poor':'Bad'))+'</div>';
         latHtml+='</div>';
         if(wan1Lat>0){
           latHtml+='<div style="background:var(--border);border-radius:8px;padding:10px;text-align:center">';
-          latHtml+='<div style="font-size:0.55rem;color:var(--muted);text-transform:uppercase;margin-bottom:4px">WAN1 Latency</div>';
+          latHtml+='<div style="font-size:0.55rem;color:var(--muted);text-transform:uppercase;margin-bottom:4px">T-Mobile 5G</div>';
           latHtml+='<div style="font-size:var(--fs-xl);font-weight:800;color:'+wan1Color+'">'+wan1Lat.toFixed(0)+'ms</div>';
           latHtml+='<div style="font-size:var(--fs-xs);color:var(--muted);margin-top:2px">'+((wan1Lat<20?'Excellent':wan1Lat<50?'Good':wan1Lat<100?'Fair':wan1Lat<200?'Poor':'Bad'))+'</div>';
           latHtml+='</div>';
@@ -563,9 +563,10 @@ async function load(){
         uptimeKuma.monitors.forEach(m=>{
           const statusColor=m.status===1?'var(--green)':m.status===2?'var(--yellow)':'var(--red)';
           const statusText=m.status===1?'Up':m.status===2?'Pending':'Down';
-          const uptimeColor=m.uptime_24h>=99?'var(--green)':m.uptime_24h>=95?'var(--yellow)':'var(--red)';
+          const uptimePct=m.uptime_24h*100;
+          const uptimeColor=uptimePct>=100?'var(--green)':uptimePct>=99?'var(--cyan)':uptimePct>=95?'var(--yellow)':'var(--red)';
           ukHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot" style="background:'+statusColor+';box-shadow:0 0 3px '+statusColor+'"></span>'+m.name+'</span><span class="stat-value" style="color:'+statusColor+'">'+statusText+'</span></div>';
-          ukHtml+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">24h: <strong style="color:'+uptimeColor+'">'+(m.uptime_24h*100).toFixed(1)+'%</strong></span><span class="stat-value">'+(m.latest_ping?m.latest_ping+'ms':'')+'</span></div>';
+          ukHtml+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">24h: <strong style="color:'+uptimeColor+'">'+uptimePct.toFixed(1)+'%</strong></span><span class="stat-value">'+(m.latest_ping?m.latest_ping+'ms':'')+'</span></div>';
         });
         html+=cardWrap('card-uptime','⏱️','Uptime Kuma',ukHtml,'span-full');
       }
@@ -714,9 +715,10 @@ async function load(){
             uptimeKuma.monitors.forEach(m=>{
               const statusColor2=m.status===1?'var(--green)':m.status===2?'var(--yellow)':'var(--red)';
               const statusText2=m.status===1?'Up':m.status===2?'Pending':'Down';
-              const uptimeColor2=m.uptime_24h>=99?'var(--green)':m.uptime_24h>=95?'var(--yellow)':'var(--red)';
+              const uptimePct2=m.uptime_24h*100;
+              const uptimeColor2=uptimePct2>=100?'var(--green)':uptimePct2>=99?'var(--cyan)':uptimePct2>=95?'var(--yellow)':'var(--red)';
               ukHtml2+='<div class="stat-row"><span class="stat-label"><span class="status-dot" style="background:'+statusColor2+';box-shadow:0 0 3px '+statusColor2+'"></span>'+m.name+'</span><span class="stat-value" style="color:'+statusColor2+'">'+statusText2+'</span></div>';
-              ukHtml2+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">24h: <strong style="color:'+uptimeColor2+'">'+(m.uptime_24h*100).toFixed(1)+'%</strong></span><span class="stat-value">'+(m.latest_ping?m.latest_ping+'ms':'')+'</span></div>';
+              ukHtml2+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label">24h: <strong style="color:'+uptimeColor2+'">'+uptimePct2.toFixed(1)+'%</strong></span><span class="stat-value">'+(m.latest_ping?m.latest_ping+'ms':'')+'</span></div>';
             });
             body4.innerHTML=ukHtml2;
           }
