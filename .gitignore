@@ -1,5 +1,7 @@
 .env
 __pycache__/
 *.pyc
+*.py
 data/
 venv/
+*.tmp
