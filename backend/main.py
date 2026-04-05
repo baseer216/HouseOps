@@ -18,9 +18,9 @@ HA_URL = os.getenv("HA_URL", "http://10.0.0.2:8123/api")
 HA_TOKEN = os.getenv("HA_TOKEN", "")
 
 UPTIME_KUMA_URL = os.getenv("UPTIME_KUMA_URL", "http://10.100.1.58:3001")
-UPTIME_KUMA_SLUG = os.getenv("UPTIME_KUMA_SLUG", "home")
-PIHOLE_1_IP = os.getenv("PIHOLE_1_IP", "10.100.1.3")
-PIHOLE_2_IP = os.getenv("PIHOLE_2_IP", "10.100.1.101")
+UPTIME_KUMA_SLUGS = ["internet", "home-gear"]
+PIHOLE_1 = {"url": "https://10.100.1.3:443/api", "token": "01KC8628RM3HQE6V5DSFS5RY1R", "name": "Pi-hole 1"}
+PIHOLE_2 = {"url": "http://10.100.1.101/api", "token": "01KKM9N39V7D9VW5KGHSEQW7A1", "name": "Pi-hole 2"}
 ADGUARD_IP = os.getenv("ADGUARD_IP", "10.100.1.99")
 
 app = FastAPI(title="HouseOPS", version="2.0")
@@ -305,50 +305,53 @@ def get_device_health_summary():
 # ─── Uptime Kuma ──────────────────────────────────────────────
 
 def get_uptime_kuma():
+    all_monitors = []
+    for slug in UPTIME_KUMA_SLUGS:
+        try:
+            r = requests.get(f"{UPTIME_KUMA_URL}/api/status-page/heartbeat/{slug}", timeout=5)
+            r.raise_for_status()
+            data = r.json()
+            monitors = data.get("monitorList", [])
+            for m in monitors:
+                heartbeats = m.get("heartbeatList", {})
+                latest = None
+                for key, beats in heartbeats.items():
+                    if beats:
+                        latest = beats[-1]
+                        break
+                all_monitors.append({
+                    "name": m.get("name", "?"),
+                    "status": m.get("status", 0),
+                    "uptime_24h": m.get("uptime", 0),
+                    "latest_ping": latest.get("ping", None) if latest else None,
+                    "url": m.get("url", ""),
+                    "group": slug,
+                })
+        except Exception as e:
+            all_monitors.append({"name": f"Status Page: {slug}", "status": 0, "uptime_24h": 0, "latest_ping": None, "url": "", "group": slug, "error": str(e)})
+    return {"monitors": all_monitors, "total": len(all_monitors), "up": sum(1 for m in all_monitors if m["status"] == 1)}
+
+# ─── Pi-hole V6 ───────────────────────────────────────────────
+
+def get_pihole_v6(config):
     try:
-        r = requests.get(f"{UPTIME_KUMA_URL}/api/status-page/heartbeat/{UPTIME_KUMA_SLUG}", timeout=5)
+        r = requests.get(f"{config['url']}/stats/summary", headers={"X-API-Key": config["token"]}, timeout=5, verify=False)
         r.raise_for_status()
         data = r.json()
-        monitors = data.get("monitorList", [])
-        result = []
-        for m in monitors:
-            heartbeats = m.get("heartbeatList", {})
-            latest = None
-            for key, beats in heartbeats.items():
-                if beats:
-                    latest = beats[-1]
-                    break
-            result.append({
-                "name": m.get("name", "?"),
-                "status": m.get("status", 0),
-                "uptime_24h": m.get("uptime", 0),
-                "latest_ping": latest.get("ping", None) if latest else None,
-                "url": m.get("url", ""),
-            })
-        return {"monitors": result, "total": len(result), "up": sum(1 for m in result if m["status"] == 1)}
-    except Exception as e:
-        return {"monitors": [], "error": str(e)}
-
-# ─── Pi-hole ──────────────────────────────────────────────────
-
-def get_pihole(ip):
-    try:
-        r = requests.get(f"http://{ip}/admin/api.php?summaryRaw", timeout=5)
-        r.raise_for_status()
-        data = r.json()
+        queries = data.get("queries", {})
+        gravity = data.get("gravity", {})
         return {
-            "name": f"Pi-hole ({ip})",
-            "ip": ip,
+            "name": config["name"],
             "online": True,
-            "ads_blocked": data.get("ads_blocked_today", 0),
-            "ads_pct": round(data.get("ads_percentage_today", 0), 1),
-            "queries": data.get("dns_queries_today", 0),
-            "blocked": data.get("ads_blocked_today", 0),
-            "domains_blocked": data.get("domains_being_blocked", 0),
-            "status": data.get("status", "unknown"),
+            "ads_blocked": queries.get("blocked", 0),
+            "ads_pct": round(queries.get("percent_blocked", 0), 1),
+            "queries": queries.get("total", 0),
+            "blocked": queries.get("blocked", 0),
+            "domains_blocked": gravity.get("domains_being_blocked", 0),
+            "status": "active",
         }
-    except:
-        return {"name": f"Pi-hole ({ip})", "ip": ip, "online": False, "status": "offline"}
+    except Exception as e:
+        return {"name": config["name"], "online": False, "status": "offline", "error": str(e)}
 
 # ─── AdGuard Home ─────────────────────────────────────────────
 
@@ -384,8 +387,8 @@ def api_dns():
     cached = cache.get("dns")
     if cached is not None:
         return cached
-    p1 = get_pihole(PIHOLE_1_IP)
-    p2 = get_pihole(PIHOLE_2_IP)
+    p1 = get_pihole_v6(PIHOLE_1)
+    p2 = get_pihole_v6(PIHOLE_2)
     ag = get_adguard()
     total_queries = (p1.get("queries", 0) or 0) + (p2.get("queries", 0) or 0) + (ag.get("queries", 0) or 0)
     total_blocked = (p1.get("blocked", 0) or 0) + (p2.get("blocked", 0) or 0) + (ag.get("blocked", 0) or 0)
@@ -555,8 +558,8 @@ def api_dashboard():
         result["environment"] = {"indoor_temp": None}
     
     try:
-        p1 = get_pihole(PIHOLE_1_IP)
-        p2 = get_pihole(PIHOLE_2_IP)
+        p1 = get_pihole_v6(PIHOLE_1)
+        p2 = get_pihole_v6(PIHOLE_2)
         ag = get_adguard()
         total_queries = (p1.get("queries", 0) or 0) + (p2.get("queries", 0) or 0) + (ag.get("queries", 0) or 0)
         total_blocked = (p1.get("blocked", 0) or 0) + (p2.get("blocked", 0) or 0) + (ag.get("blocked", 0) or 0)
