@@ -86,6 +86,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .vm-card .name{font-size:var(--fs-sm);font-weight:700;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vm-card .detail{color:var(--muted);font-size:var(--fs-xs);line-height:1.4}
 .insight-box{background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.12);border-radius:7px;padding:4px 9px;margin-bottom:2px;font-size:var(--fs-sm);line-height:1.3}
+.insight-box.warn{background:rgba(234,179,8,0.06);border-color:rgba(234,179,8,0.12)}
+.insight-box.critical{background:rgba(239,68,68,0.06);border-color:rgba(239,68,68,0.12)}
+.insight-box.ok{background:rgba(34,197,94,0.06);border-color:rgba(34,197,94,0.12)}
 .donut-container{display:flex;align-items:center;gap:10px}
 .donut-container canvas{max-width:120px;max-height:120px;flex-shrink:0}
 .donut-legend{flex:1;min-width:0}
@@ -160,7 +163,7 @@ async function load(){
   if(refreshController) refreshController.abort();
   refreshController = new AbortController();
   try{
-    const [dash,power,vms,clients,netDevices,storage,water,switches,unifi,unifiClients,latency]=await Promise.all([
+    const [dash,power,vms,clients,netDevices,storage,water,switches,unifi,unifiClients,latency,insights,devHealth]=await Promise.all([
       fetchWithTimeout(API+'/api/dashboard'),
       fetchWithTimeout(API+'/api/power'),
       fetchWithTimeout(API+'/api/proxmox/vms'),
@@ -171,7 +174,9 @@ async function load(){
       fetchWithTimeout(API+'/api/switches'),
       fetchWithTimeout(API+'/api/unifi'),
       fetchWithTimeout(API+'/api/unifi/clients'),
-      fetchWithTimeout(API+'/api/latency').catch(()=>({wan:[],wan1:[]}))
+      fetchWithTimeout(API+'/api/latency').catch(()=>({wan:[],wan1:[]})),
+      fetchWithTimeout(API+'/api/insights').catch(()=>({insights:[]})),
+      fetchWithTimeout(API+'/api/device-health').catch(()=>({devices:[]}))
     ]);
 
     document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
@@ -296,6 +301,50 @@ async function load(){
         html+=cardWrap('card-switches','🔌','Network Switches',sHtml);
       }
 
+      // ENVIRONMENT / TEMP
+      const env=dash.environment||{};
+      const temp=env.indoor_temp;
+      if(temp&&temp.value){
+        const tempVal=temp.value;
+        const tempUnit=temp.unit||'°C';
+        const tempColor=tempVal>28?'var(--red)':tempVal>25?'var(--yellow)':'var(--green)';
+        const wattsDevices2=(power.all||[]).filter(d=>d.watts).sort((a,b)=>b.watts-a.watts);
+        const totalW2=wattsDevices2.reduce((s,d)=>s+d.watts,0);
+        let tempHtml='<div class="big-stat"><span class="number" id="v-temp-val" style="color:'+tempColor+'">'+tempVal.toFixed(1)+'</span><span class="unit">'+tempUnit+'</span><div class="label" id="v-temp-name">'+temp.name+'</div></div>';
+        tempHtml+='<div class="stat-row"><span class="stat-label">Current Draw</span><span class="stat-value" id="v-temp-watts">'+totalW2.toFixed(0)+'W</span></div>';
+        if(totalW2>500&&tempVal>24){
+          tempHtml+='<div class="insight-box" style="margin-top:8px">⚠️ High power draw may be raising indoor temp</div>';
+        }else if(tempVal<22){
+          tempHtml+='<div class="insight-box" style="margin-top:8px;color:var(--green)">✅ Comfortable temperature</div>';
+        }
+        html+=cardWrap('card-temp','🌡️','Indoor Temperature',tempHtml);
+      }
+
+      // DEVICE HEALTH
+      if(devHealth&&devHealth.devices&&devHealth.devices.length){
+        let dhHtml='';
+        devHealth.devices.forEach(d=>{
+          const sc=d.status==='online'?'online':d.status==='degraded'?'':'offline';
+          const st=d.status.charAt(0).toUpperCase()+d.status.slice(1);
+          const pingStr=d.avg_ping_ms?d.avg_ping_ms+'ms':'N/A';
+          const availStr=d.availability_pct!==null&&d.availability_pct!==undefined?d.availability_pct+'%':'N/A';
+          const httpStr=d.http_status?'HTTP '+d.http_status:'—';
+          dhHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot '+sc+'"></span>'+d.name+'</span><span class="stat-value" style="color:var(--'+(sc==='online'?'green':sc==='degraded'?'yellow':'red')+')">'+st+'</span></div>';
+          dhHtml+='<div class="stat-row" style="font-size:var(--fs-xs)"><span class="stat-label" style="font-size:var(--fs-xs)">Ping: '+pingStr+' · Avail: '+availStr+' · '+httpStr+'</span><span class="stat-value" style="font-size:var(--fs-xs)">'+(d.type||'')+'</span></div>';
+        });
+        html+=cardWrap('card-devhealth','🏥','Device Health',dhHtml,'span-full');
+      }
+
+      // INSIGHTS
+      if(insights&&insights.insights&&insights.insights.length){
+        let iHtml='';
+        insights.insights.forEach(ins=>{
+          const cls=ins.level==='ok'?'ok':ins.level==='warn'?'warn':ins.level==='critical'?'critical':'info';
+          iHtml+='<div class="insight-box" style="background:'+(cls==='ok'?'rgba(34,197,94,0.06)':cls==='warn'?'rgba(234,179,8,0.06)':cls==='critical'?'rgba(239,68,68,0.06)':'rgba(59,130,246,0.06)')+';border-color:'+(cls==='ok'?'rgba(34,197,94,0.12)':cls==='warn'?'rgba(234,179,8,0.12)':cls==='critical'?'rgba(239,68,68,0.12)':'rgba(59,130,246,0.12)')+'"><strong>'+(ins.icon||'')+' '+(ins.title||'')+'</strong><br><span style="color:var(--muted)">'+(ins.detail||'')+'</span></div>';
+        });
+        html+=cardWrap('card-insights','🧠','Network Insights',iHtml,'span-full');
+      }
+
       document.getElementById('dashboard').innerHTML=html;
       collapsedCards.forEach(id=>{const el=document.getElementById(id);if(el)el.classList.add('collapsed')});
 
@@ -365,6 +414,53 @@ async function load(){
         });
       }
 
+      // Update temp
+      const env2=dash.environment||{};
+      const temp2=env2.indoor_temp;
+      if(temp2&&temp2.value){
+        const tvEl=document.getElementById('v-temp-val');
+        if(tvEl){tvEl.textContent=temp2.value.toFixed(1);
+          const tc2=temp2.value>28?'var(--red)':temp2.value>25?'var(--yellow)':'var(--green)';
+          tvEl.style.color=tc2;
+        }
+        const twEl=document.getElementById('v-temp-watts');
+        if(twEl)twEl.textContent=totalW.toFixed(0)+'W';
+      }
+
+      // Update device health in-place
+      if(devHealth&&devHealth.devices&&devHealth.devices.length){
+        devHealth.devices.forEach(d=>{
+          const rows2=document.querySelectorAll('#card-devhealth .stat-row');
+          rows2.forEach(row=>{
+            const label=row.querySelector('.stat-label');
+            if(label&&label.textContent.includes(d.name)){
+              const val=row.querySelector('.stat-value');
+              if(val){
+                const sc2=d.status==='online'?'online':d.status==='degraded'?'':'offline';
+                val.textContent=d.status.charAt(0).toUpperCase()+d.status.slice(1);
+                val.style.color='var(--'+(sc2==='online'?'green':sc2==='degraded'?'yellow':'red')+')';
+              }
+            }
+          });
+        });
+      }
+
+      // Update insights in-place
+      if(insights&&insights.insights&&insights.insights.length){
+        const insCard=document.getElementById('card-insights');
+        if(insCard){
+          const body2=insCard.querySelector('.card-body');
+          if(body2){
+            let iHtml2='';
+            insights.insights.forEach(ins=>{
+              const cls2=ins.level==='ok'?'ok':ins.level==='warn'?'warn':ins.level==='critical'?'critical':'info';
+              iHtml2+='<div class="insight-box '+cls2+'"><strong>'+(ins.icon||'')+' '+(ins.title||'')+'</strong><br><span style="color:var(--muted)">'+(ins.detail||'')+'</span></div>';
+            });
+            body2.innerHTML=iHtml2;
+          }
+        }
+      }
+
       updateExecSummary(dash,power,vms,unifi);
     }
   }catch(e){
@@ -381,6 +477,8 @@ function updateExecSummary(dash,power,vms,unifi){
   const standbyDevices=wattsDevices.filter(d=>d.watts<5);
   const top3=wattsDevices.slice(0,3);
   const top3Pct=totalW>0?top3.reduce((s,d)=>s+d.watts,0)/totalW*100:0;
+  const env=dash.environment||{};
+  const temp=env.indoor_temp;
 
   let kpis='';
   kpis+='<div class="exec-kpi"><span class="icon">⚡</span><div class="value" style="color:var(--accent)">'+totalW.toFixed(0)+'W</div><div class="label">Power</div></div>';
@@ -389,6 +487,10 @@ function updateExecSummary(dash,power,vms,unifi){
   kpis+='<div class="exec-kpi"><span class="icon">📦</span><div class="value" style="color:var(--cyan)">'+(px.vms_running||0)+'</div><div class="label">VMs</div></div>';
   kpis+='<div class="exec-kpi"><span class="icon">🖥️</span><div class="value" style="color:'+(px.cpu_pct>70?'var(--red)':'var(--green)')+'">'+(px.cpu_pct||0)+'%</div><div class="label">CPU</div></div>';
   kpis+='<div class="exec-kpi"><span class="icon">🔌</span><div class="value" style="color:var(--purple)">'+(px.ram_pct||0)+'%</div><div class="label">RAM</div></div>';
+  if(temp&&temp.value){
+    const tc=temp.value>28?'var(--red)':temp.value>25?'var(--yellow)':'var(--green)';
+    kpis+='<div class="exec-kpi"><span class="icon">🌡️</span><div class="value" style="color:'+tc+'">'+temp.value.toFixed(1)+temp.unit+'</div><div class="label">Temp</div></div>';
+  }
   document.getElementById('execKpis').innerHTML=kpis;
 
   let alerts='';
@@ -401,6 +503,7 @@ function updateExecSummary(dash,power,vms,unifi){
   alerts+='<div class="exec-alert '+(netDown>1000000?'warn':'ok')+'">📶 '+(netDown>1000000?(netDown/1000000).toFixed(1)+' Mbps':(netDown/1000).toFixed(0)+' Kbps')+'</div>';
   alerts+='<div class="exec-alert ok">📦 '+(px.vms_running||0)+'/'+(px.vms_total||0)+' VMs</div>';
   if(unifi&&unifi.online){const uc=unifi.total_clients||0;alerts+='<div class="exec-alert ok">📡 '+uc+' UniFi clients</div>'}
+  if(temp&&temp.value&&temp.value>28)alerts+='<div class="exec-alert critical">🌡️ Hot: '+temp.value+temp.unit+'</div>';
   document.getElementById('execAlerts').innerHTML=alerts;
 }
 

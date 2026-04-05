@@ -25,13 +25,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 class Cache:
     def __init__(self):
         self._data = {}
-
     def get(self, key):
         entry = self._data.get(key)
         if entry and time.time() - entry["time"] < entry["ttl"]:
             return entry["value"]
         return None
-
     def set(self, key, value, ttl=10):
         self._data[key] = {"value": value, "time": time.time(), "ttl": ttl}
 
@@ -111,13 +109,185 @@ def fmt_bytes(b):
     if b < 1073741824: return f"{b/1048576:.1f} MB"
     return f"{b/1073741824:.2f} GB"
 
+def ping_host(ip, count=2):
+    try:
+        r = subprocess.run(["ping", "-c", str(count), "-W", "2", ip], capture_output=True, text=True, timeout=8)
+        for line in r.stdout.split('\n'):
+            if 'rtt' in line or 'round-trip' in line:
+                parts = line.split('/')
+                if len(parts) >= 5:
+                    return {"reachable": True, "avg_ms": round(float(parts[4]), 1), "loss": 0}
+        if r.returncode != 0:
+            return {"reachable": False, "avg_ms": None, "loss": 100}
+        return {"reachable": True, "avg_ms": 0, "loss": 0}
+    except:
+        return {"reachable": False, "avg_ms": None, "loss": 100}
+
+def http_test(url, timeout=3):
+    try:
+        start = time.time()
+        r = requests.get(url, timeout=timeout, verify=False)
+        elapsed = round((time.time() - start) * 1000, 0)
+        return {"reachable": True, "status": r.status_code, "response_ms": elapsed}
+    except:
+        return {"reachable": False, "status": None, "response_ms": None}
+
 # ─── Switches Config ──────────────────────────────────────────
 
+CORE_10G_PORTS = {2, 7, 8}
+
 SWITCHES = [
-    {"name": "Core Switch", "ip": os.getenv("SWITCH_CORE_IP", "10.0.0.10"), "community": os.getenv("SWITCH_CORE_COMM", "public"), "model": "10G Managed"},
-    {"name": "Office Switch", "ip": os.getenv("SWITCH_OFFICE_IP", "10.0.0.11"), "community": os.getenv("SWITCH_OFFICE_COMM", "public"), "model": "2.5G Managed"},
-    {"name": "Studio Switch", "ip": os.getenv("SWITCH_STUDIO_IP", "10.0.0.12"), "community": os.getenv("SWITCH_STUDIO_COMM", "public"), "model": "2.5G Managed"},
+    {"name": "Core Switch", "ip": os.getenv("SWITCH_CORE_IP", "10.0.0.10"), "community": os.getenv("SWITCH_CORE_COMM", "public"), "model": "10G Managed", "is_core": True},
+    {"name": "Office Switch", "ip": os.getenv("SWITCH_OFFICE_IP", "10.0.0.11"), "community": os.getenv("SWITCH_OFFICE_COMM", "public"), "model": "2.5G Managed", "is_core": False},
+    {"name": "Studio Switch", "ip": os.getenv("SWITCH_STUDIO_IP", "10.0.0.12"), "community": os.getenv("SWITCH_STUDIO_COMM", "public"), "model": "2.5G Managed", "is_core": False},
 ]
+
+# ─── 5-Min SNMP Averages ─────────────────────────────────────
+
+_switch_5min = {}  # {ip: {"samples": [...], "ports_up_avg": 0, "ports_down_avg": 0, "errors_5min": 0, "availability_pct": 100.0}}
+
+def _poll_switches_5min():
+    while True:
+        try:
+            for sw in SWITCHES:
+                ip = sw["ip"]
+                if ip not in _switch_5min:
+                    _switch_5min[ip] = {"samples": [], "availability_checks": 0, "availability_ok": 0}
+                
+                result = ping_host(ip, 1)
+                _switch_5min[ip]["availability_checks"] += 1
+                if result["reachable"]:
+                    _switch_5min[ip]["availability_ok"] += 1
+                
+                sample = {"time": time.time(), "ping_ms": result["avg_ms"], "reachable": result["reachable"], "ports_up": 0, "ports_down": 0, "total_errors": 0, "port_details": []}
+                
+                try:
+                    if_oper = snmp_walk_indexed(ip, sw["community"], "1.3.6.1.2.1.2.2.1.8")
+                    if_in_err = snmp_walk_indexed(ip, sw["community"], "1.3.6.1.2.1.2.2.1.14")
+                    if_out_err = snmp_walk_indexed(ip, sw["community"], "1.3.6.1.2.1.2.2.1.20")
+                    if_speed = snmp_walk_indexed(ip, sw["community"], "1.3.6.1.2.1.2.2.1.5")
+                    if_in_oct = snmp_walk_indexed(ip, sw["community"], "1.3.6.1.2.1.2.2.1.10")
+                    if_out_oct = snmp_walk_indexed(ip, sw["community"], "1.3.6.1.2.1.2.2.1.16")
+                    
+                    physical_ports = sorted([int(k) for k in if_oper.keys() if int(k) < 100])
+                    ports_up = sum(1 for k in physical_ports if if_oper.get(str(k)) == "1")
+                    ports_down = len(physical_ports) - ports_up
+                    total_errors = sum(int(if_in_err.get(str(k), 0) or 0) + int(if_out_err.get(str(k), 0) or 0) for k in physical_ports)
+                    
+                    sample["ports_up"] = ports_up
+                    sample["ports_down"] = ports_down
+                    sample["total_errors"] = total_errors
+                    
+                    port_details = []
+                    for i in physical_ports:
+                        idx = str(i)
+                        spd = int(if_speed.get(idx, "0") or 0)
+                        port_details.append({
+                            "port": i,
+                            "status": "up" if if_oper.get(idx) == "1" else "down",
+                            "speed": spd,
+                            "in_octets": int(if_in_oct.get(idx, "0") or 0),
+                            "out_octets": int(if_out_oct.get(idx, "0") or 0),
+                            "in_errors": int(if_in_err.get(idx, "0") or 0),
+                            "out_errors": int(if_out_err.get(idx, "0") or 0),
+                        })
+                    sample["port_details"] = port_details
+                except:
+                    pass
+                
+                _switch_5min[ip]["samples"].append(sample)
+                cutoff = time.time() - 300
+                _switch_5min[ip]["samples"] = [s for s in _switch_5min[ip]["samples"] if s["time"] > cutoff]
+        except:
+            pass
+        time.sleep(30)
+
+threading.Thread(target=_poll_switches_5min, daemon=True).start()
+
+def get_switch_5min_avg(ip):
+    data = _switch_5min.get(ip)
+    if not data or not data["samples"]:
+        return None
+    samples = data["samples"]
+    reachable_samples = [s for s in samples if s["reachable"]]
+    avail_pct = round((data["availability_ok"] / max(data["availability_checks"], 1)) * 100, 1) if data["availability_checks"] > 0 else 100.0
+    
+    avg_ping = round(sum(s["ping_ms"] for s in reachable_samples if s["ping_ms"]) / max(len([s for s in reachable_samples if s["ping_ms"]]), 1), 1)
+    avg_ports_up = round(sum(s["ports_up"] for s in samples) / len(samples), 1)
+    avg_ports_down = round(sum(s["ports_down"] for s in samples) / len(samples), 1)
+    total_errors = sum(s["total_errors"] for s in samples)
+    
+    latest = samples[-1]
+    return {
+        "avg_ping_ms": avg_ping,
+        "avg_ports_up": avg_ports_up,
+        "avg_ports_down": avg_ports_down,
+        "total_errors_5min": total_errors,
+        "availability_pct": avail_pct,
+        "samples_collected": len(samples),
+        "latest_ports": latest.get("port_details", []),
+    }
+
+# ─── Device Health Monitor ────────────────────────────────────
+
+_device_health = {}
+_NETWORK_DEVICES = [
+    {"name": "Gateway", "ip": "10.100.1.1", "type": "gateway"},
+    {"name": "UniFi Dream Router", "ip": UNIFI_IP, "type": "router"},
+    {"name": "Proxmox", "ip": PVE_IP, "type": "server"},
+    {"name": "Home Assistant", "ip": "10.100.1.120", "type": "server"},
+]
+for sw in SWITCHES:
+    _NETWORK_DEVICES.append({"name": sw["name"], "ip": sw["ip"], "type": "switch"})
+
+def _monitor_devices():
+    while True:
+        try:
+            now = time.time()
+            for dev in _NETWORK_DEVICES:
+                ip = dev["ip"]
+                if ip not in _device_health:
+                    _device_health[ip] = {"name": dev["name"], "type": dev["type"], "pings": [], "http_checks": []}
+                
+                ping_result = ping_host(ip, 1)
+                _device_health[ip]["pings"].append({"time": now, **ping_result})
+                _device_health[ip]["pings"] = [p for p in _device_health[ip]["pings"] if now - p["time"] < 300]
+                
+                if dev["type"] == "server":
+                    url = f"http://{ip}:8123" if "100.1.120" in ip else f"https://{ip}:8006"
+                    http_result = http_test(url)
+                    _device_health[ip]["http_checks"].append({"time": now, **http_result})
+                    _device_health[ip]["http_checks"] = [h for h in _device_health[ip]["http_checks"] if now - h["time"] < 300]
+        except:
+            pass
+        time.sleep(15)
+
+threading.Thread(target=_monitor_devices, daemon=True).start()
+
+def get_device_health_summary():
+    result = []
+    for dev in _NETWORK_DEVICES:
+        ip = dev["ip"]
+        data = _device_health.get(ip)
+        if not data or not data["pings"]:
+            result.append({"name": dev["name"], "ip": ip, "type": dev["type"], "status": "unknown", "avg_ping_ms": None, "availability_pct": None, "http_status": None})
+            continue
+        
+        pings = data["pings"]
+        reachable = sum(1 for p in pings if p["reachable"])
+        avail = round((reachable / len(pings)) * 100, 1)
+        avg_ping = round(sum(p["avg_ms"] for p in pings if p["avg_ms"]) / max(len([p for p in pings if p["avg_ms"]]), 1), 1)
+        
+        http_status = None
+        if data["http_checks"]:
+            latest_http = data["http_checks"][-1]
+            http_status = latest_http.get("status")
+        
+        status = "online" if avail > 90 else ("degraded" if avail > 50 else "offline")
+        result.append({"name": dev["name"], "ip": ip, "type": dev["type"], "status": status, "avg_ping_ms": avg_ping, "availability_pct": avail, "http_status": http_status, "ping_samples": len(pings)})
+    return result
+
+# ─── Switch Status (instant) ──────────────────────────────────
 
 def get_switch_status(sw):
     try:
@@ -151,11 +321,13 @@ def get_switch_status(sw):
         
         for i in physical_ports:
             idx = str(i)
+            spd = int(if_speed.get(idx, "0") or 0)
             port_status.append({
                 "port": i,
                 "name": if_names.get(idx, f"Port {i}"),
                 "status": "up" if if_oper.get(idx) == "1" else "down",
-                "speed": int(if_speed.get(idx, "0") or 0),
+                "speed": spd,
+                "is_10g": sw.get("is_core") and i in CORE_10G_PORTS,
             })
             port_traffic.append({
                 "port": i,
@@ -168,14 +340,14 @@ def get_switch_status(sw):
         ports_up = sum(1 for p in port_status if p["status"] == "up")
         
         return {
-            "name": sw["name"], "ip": sw["ip"], "model": sw["model"],
+            "name": sw["name"], "ip": sw["ip"], "model": sw["model"], "is_core": sw.get("is_core", False),
             "online": True, "total_ports": len(port_status),
             "ports_up": ports_up, "ports_down": len(port_status) - ports_up,
             "uptime_days": uptime_days, "ports": port_status, "traffic": port_traffic,
         }
     except Exception as e:
         return {
-            "name": sw["name"], "ip": sw["ip"], "model": sw["model"],
+            "name": sw["name"], "ip": sw["ip"], "model": sw["model"], "is_core": sw.get("is_core", False),
             "online": False, "total_ports": 0, "ports_up": 0, "ports_down": 0,
             "uptime_days": 0, "ports": [], "traffic": [], "error": str(e),
         }
@@ -188,7 +360,7 @@ def api_dashboard():
     if cached is not None:
         return cached
 
-    result = {"power": {}, "network": {}, "proxmox": {}}
+    result = {"power": {}, "network": {}, "proxmox": {}, "environment": {}}
     try:
         entities = ha_get("/states")
         power_entities = [e for e in entities if e.get("attributes", {}).get("unit_of_measurement") == "W"]
@@ -228,6 +400,35 @@ def api_dashboard():
         }
     except:
         result["proxmox"] = {"vms_running": 0, "vms_total": 0, "cpu_pct": 0, "ram_pct": 0}
+    
+    try:
+        entities = ha_get("/states")
+        temp_sensor = None
+        for e in entities:
+            eid = e.get("entity_id", "").lower()
+            attrs = e.get("attributes", {})
+            unit = attrs.get("unit_of_measurement", "")
+            if ("temperature" in eid or "temp" in eid) and unit in ["°C", "°F", "C", "F"]:
+                if any(x in eid for x in ["indoor", "inside", "living", "main", "house", "room", "hall"]):
+                    try:
+                        temp_sensor = {"name": attrs.get("friendly_name", e["entity_id"]), "value": float(e["state"]), "unit": unit}
+                        break
+                    except:
+                        pass
+        if not temp_sensor:
+            for e in entities:
+                eid = e.get("entity_id", "").lower()
+                attrs = e.get("attributes", {})
+                unit = attrs.get("unit_of_measurement", "")
+                if ("temperature" in eid or "temp" in eid) and unit in ["°C", "°F", "C", "F"]:
+                    try:
+                        temp_sensor = {"name": attrs.get("friendly_name", e["entity_id"]), "value": float(e["state"]), "unit": unit}
+                        break
+                    except:
+                        pass
+        result["environment"] = {"indoor_temp": temp_sensor}
+    except:
+        result["environment"] = {"indoor_temp": None}
     
     cache.set("dashboard", result, ttl=8)
     return result
@@ -419,7 +620,11 @@ def api_switches():
         return cached
     result = []
     for sw in SWITCHES:
-        result.append(get_switch_status(sw))
+        status = get_switch_status(sw)
+        avg5 = get_switch_5min_avg(sw["ip"])
+        if avg5:
+            status["avg_5min"] = avg5
+        result.append(status)
     out = {"switches": result}
     cache.set("switches", out, ttl=8)
     return out
@@ -430,6 +635,88 @@ def api_switch_ports(switch_ip: str):
     if not sw:
         raise HTTPException(status_code=404, detail="Switch not found")
     return get_switch_status(sw)
+
+@app.get("/api/device-health")
+def api_device_health():
+    return {"devices": get_device_health_summary()}
+
+# ─── Insights API ─────────────────────────────────────────────
+
+@app.get("/api/insights")
+def api_insights():
+    cached = cache.get("insights")
+    if cached is not None:
+        return cached
+    
+    insights = []
+    
+    try:
+        dash = api_dashboard.__wrapped__()
+        power = api_power.__wrapped__()
+        switches_data = api_switches.__wrapped__()
+        devices = api_net_devices.__wrapped__()
+        device_health = get_device_health_summary()
+        
+        total_w = dash["power"].get("total_watts", 0)
+        indoor_temp = dash["environment"].get("indoor_temp")
+        watts_devices = power.get("all", [])
+        watts_devices = [d for d in watts_devices if d.get("watts", 0) > 0]
+        watts_devices.sort(key=lambda x: x["watts"], reverse=True)
+        top3 = watts_devices[:3]
+        standby = [d for d in watts_devices if d["watts"] < 5]
+        standby_w = sum(d["watts"] for d in standby)
+        
+        if indoor_temp and indoor_temp.get("value"):
+            temp_val = indoor_temp["value"]
+            if temp_val > 28:
+                insights.append({"level": "warn", "icon": "🌡️", "title": "High Indoor Temp", "detail": f"{temp_val}{indoor_temp.get('unit','°C')} — consider ventilation or AC"})
+            elif temp_val > 25:
+                insights.append({"level": "info", "icon": "🌡️", "title": "Warm Indoors", "detail": f"{temp_val}{indoor_temp.get('unit','°C')} — monitor if it climbs"})
+            if total_w > 500 and temp_val > 24:
+                insights.append({"level": "warn", "icon": "⚡🌡️", "title": "Power + Temp Correlation", "detail": f"High draw ({total_w:.0f}W) may be raising indoor temp ({temp_val}{indoor_temp.get('unit','°C')})"})
+        
+        if top3:
+            top3_pct = (sum(d["watts"] for d in top3) / max(total_w, 1)) * 100
+            if top3_pct > 60:
+                insights.append({"level": "info", "icon": "🔥", "title": "Power Concentration", "detail": f"Top 3 devices use {top3_pct:.0f}%: {', '.join(d['name'] for d in top3)}"})
+        
+        if standby and len(standby) > 5:
+            monthly_cost = (standby_w / 1000) * 24 * 30 * 0.15
+            insights.append({"level": "warn", "icon": "👻", "title": "Vampire Power", "detail": f"{len(standby)} devices in standby — ~${monthly_cost:.2f}/mo wasted"})
+        
+        for sw in switches_data.get("switches", []):
+            if not sw["online"]:
+                insights.append({"level": "critical", "icon": "🔌", "title": f"{sw['name']} Offline", "detail": sw.get("error", "No response")})
+            else:
+                avg5 = sw.get("avg_5min")
+                if avg5:
+                    if avg5["availability_pct"] < 100:
+                        insights.append({"level": "warn", "icon": "📉", "title": f"{sw['name']} Availability", "detail": f"{avg5['availability_pct']}% over last 5 min"})
+                    if avg5["total_errors_5min"] > 0:
+                        insights.append({"level": "warn", "icon": "⚠️", "title": f"{sw['name']} Port Errors", "detail": f"{avg5['total_errors_5min']} errors in last 5 min"})
+                    if avg5["avg_ping_ms"] and avg5["avg_ping_ms"] > 50:
+                        insights.append({"level": "warn", "icon": "🐌", "title": f"{sw['name']} High Latency", "detail": f"Avg {avg5['avg_ping_ms']}ms over 5 min"})
+        
+        for dev in device_health:
+            if dev["status"] == "offline":
+                insights.append({"level": "critical", "icon": "❌", "title": f"{dev['name']} Unreachable", "detail": f"IP: {dev['ip']}"})
+            elif dev["status"] == "degraded":
+                insights.append({"level": "warn", "icon": "⚠️", "title": f"{dev['name']} Unstable", "detail": f"{dev['availability_pct']}% availability"})
+        
+        wifi_clients = dash["network"].get("wifi", 0)
+        wired_clients = dash["network"].get("wired", 0)
+        total_clients = wifi_clients + wired_clients
+        if total_clients > 0 and wifi_clients / total_clients > 0.8:
+            insights.append({"level": "info", "icon": "📶", "title": "WiFi Heavy", "detail": f"{wifi_clients}/{total_clients} clients on WiFi — consider wiring stationary devices"})
+        
+        if not insights:
+            insights.append({"level": "ok", "icon": "✅", "title": "All Systems Normal", "detail": "No issues detected"})
+    except Exception as e:
+        insights = [{"level": "error", "icon": "❌", "title": "Insights Error", "detail": str(e)}]
+    
+    result = {"insights": insights}
+    cache.set("insights", result, ttl=15)
+    return result
 
 # ─── UniFi API ────────────────────────────────────────────────
 
