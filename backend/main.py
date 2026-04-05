@@ -19,9 +19,11 @@ HA_TOKEN = os.getenv("HA_TOKEN", "")
 
 UPTIME_KUMA_URL = os.getenv("UPTIME_KUMA_URL", "http://10.100.1.58:3001")
 UPTIME_KUMA_SLUGS = ["internet", "home-gear"]
-PIHOLE_1 = {"url": "https://10.100.1.3:443/api", "token": "01KC8628RM3HQE6V5DSFS5RY1R", "name": "Pi-hole 1"}
-PIHOLE_2 = {"url": "http://10.100.1.101/api", "token": "01KKM9N39V7D9VW5KGHSEQW7A1", "name": "Pi-hole 2"}
+PIHOLE_1 = {"url": "https://10.100.1.3:443/api", "token": "01KC8628RM3HQE6V5DSFS5RY1R", "name": "IoT Network"}
+PIHOLE_2 = {"url": "http://10.100.1.101/api", "token": "01KKM9N39V7D9VW5KGHSEQW7A1", "name": "Just The Perfect Balance"}
 ADGUARD_IP = os.getenv("ADGUARD_IP", "10.100.1.99")
+ADGUARD_USER = "user"
+ADGUARD_PASS = "MhzQeYWp6D5hZZ2"
 
 app = FastAPI(title="HouseOPS", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -379,10 +381,11 @@ def get_pihole_v6(config):
 
 def get_adguard():
     try:
-        stats = requests.get(f"http://{ADGUARD_IP}/control/stats", timeout=5)
-        status = requests.get(f"http://{ADGUARD_IP}/control/status", timeout=5)
+        auth = (ADGUARD_USER, ADGUARD_PASS)
+        stats = requests.get(f"http://{ADGUARD_IP}/control/stats", auth=auth, timeout=5)
+        status = requests.get(f"http://{ADGUARD_IP}/control/status", auth=auth, timeout=5)
         if stats.status_code != 200:
-            raise Exception(f"HTTP {stats.status_code}")
+            raise Exception(f"HTTP {stats.status_code}: {stats.text[:200]}")
         sd = stats.json()
         st = status.json() if status.status_code == 200 else {}
         total_q = sd.get("num_dns_queries", 0)
