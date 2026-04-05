@@ -68,22 +68,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 ## Configuration
 
-Copy `.env.example` to `.env` and configure:
-
-```env
-# UniFi Dream Router
-UNIFI_IP=10.0.0.1
-UNIFI_API_KEY=your_api_key_here
-
-# Proxmox
-PVE_IP=10.0.0.2
-PVE_TOKEN_ID=root@pam!houseops
-PVE_SECRET=your_token_secret
-
-# Home Assistant
-HA_URL=http://10.0.0.3:8123/api
-HA_TOKEN=your_ha_token
-```
+Copy `.env.example` to `.env` and configure all required variables. See `.env.example` for the complete list of supported options.
 
 ## API Endpoints
 

@@ -12,18 +12,22 @@ DB_PATH = os.getenv("DB_PATH")
 PVE_IP = os.getenv("PVE_IP")
 PVE_TOKEN = os.getenv("PVE_TOKEN_ID")
 PVE_SECRET = os.getenv("PVE_SECRET")
-UNIFI_IP = os.getenv("UNIFI_IP", "10.0.0.1")
+UNIFI_IP = os.getenv("UNIFI_IP", "")
 UNIFI_API_KEY = os.getenv("UNIFI_API_KEY", "")
-HA_URL = os.getenv("HA_URL", "http://10.0.0.2:8123/api")
+HA_URL = os.getenv("HA_URL", "")
 HA_TOKEN = os.getenv("HA_TOKEN", "")
 
-UPTIME_KUMA_URL = os.getenv("UPTIME_KUMA_URL", "http://10.100.1.58:3001")
-UPTIME_KUMA_SLUGS = ["internet", "home-gear"]
-PIHOLE_1 = {"url": "https://10.100.1.3:443/api", "token": "01KC8628RM3HQE6V5DSFS5RY1R", "name": "IoT Network"}
-PIHOLE_2 = {"url": "http://10.100.1.101/api", "token": "01KKM9N39V7D9VW5KGHSEQW7A1", "name": "Just The Perfect Balance"}
-ADGUARD_IP = os.getenv("ADGUARD_IP", "10.100.1.99")
-ADGUARD_USER = "user"
-ADGUARD_PASS = "MhzQeYWp6D5hZZ2"
+UPTIME_KUMA_URL = os.getenv("UPTIME_KUMA_URL", "")
+UPTIME_KUMA_SLUGS = os.getenv("UPTIME_KUMA_SLUGS", "internet,home-gear").split(",")
+PIHOLE_1 = {"url": os.getenv("PIHOLE_1_URL", ""), "token": os.getenv("PIHOLE_1_TOKEN", ""), "name": os.getenv("PIHOLE_1_NAME", "Pi-hole 1")}
+PIHOLE_2 = {"url": os.getenv("PIHOLE_2_URL", ""), "token": os.getenv("PIHOLE_2_TOKEN", ""), "name": os.getenv("PIHOLE_2_NAME", "Pi-hole 2")}
+ADGUARD_IP = os.getenv("ADGUARD_IP", "")
+ADGUARD_USER = os.getenv("ADGUARD_USER", "")
+ADGUARD_PASS = os.getenv("ADGUARD_PASS", "")
+
+# Latency tracking targets
+WAN_LATENCY_TARGET = os.getenv("WAN_LATENCY_TARGET", "")
+WAN1_LATENCY_TARGET = os.getenv("WAN1_LATENCY_TARGET", "")
 
 app = FastAPI(title="HouseOPS", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -167,9 +171,9 @@ def http_test(url, timeout=3):
 CORE_10G_PORTS = {2, 7, 8}
 
 SWITCHES = [
-    {"name": "Core Switch", "ip": os.getenv("SWITCH_CORE_IP", "10.0.0.10"), "community": os.getenv("SWITCH_CORE_COMM", "public"), "model": "10G Managed", "is_core": True},
-    {"name": "Office Switch", "ip": os.getenv("SWITCH_OFFICE_IP", "10.0.0.11"), "community": os.getenv("SWITCH_OFFICE_COMM", "public"), "model": "2.5G Managed", "is_core": False},
-    {"name": "Studio Switch", "ip": os.getenv("SWITCH_STUDIO_IP", "10.0.0.12"), "community": os.getenv("SWITCH_STUDIO_COMM", "public"), "model": "2.5G Managed", "is_core": False},
+    {"name": "Core Switch", "ip": os.getenv("SWITCH_CORE_IP", ""), "community": os.getenv("SWITCH_CORE_COMM", "public"), "model": os.getenv("SWITCH_CORE_MODEL", "10G Managed"), "is_core": True},
+    {"name": "Office Switch", "ip": os.getenv("SWITCH_OFFICE_IP", ""), "community": os.getenv("SWITCH_OFFICE_COMM", "public"), "model": os.getenv("SWITCH_OFFICE_MODEL", "2.5G Managed"), "is_core": False},
+    {"name": "Studio Switch", "ip": os.getenv("SWITCH_STUDIO_IP", ""), "community": os.getenv("SWITCH_STUDIO_COMM", "public"), "model": os.getenv("SWITCH_STUDIO_MODEL", "2.5G Managed"), "is_core": False},
 ]
 
 # ─── 5-Min SNMP Averages ─────────────────────────────────────
@@ -262,10 +266,10 @@ def get_switch_5min_avg(ip):
 
 _device_health = {}
 _NETWORK_DEVICES = [
-    {"name": "Gateway", "ip": "10.100.1.1", "type": "gateway"},
+    {"name": "Gateway", "ip": os.getenv("GATEWAY_IP", ""), "type": "gateway"},
     {"name": "UniFi Dream Router", "ip": UNIFI_IP, "type": "router"},
     {"name": "Proxmox", "ip": PVE_IP, "type": "server"},
-    {"name": "Home Assistant", "ip": "10.100.1.120", "type": "server"},
+    {"name": "Home Assistant", "ip": os.getenv("HA_IP", ""), "type": "server"},
 ]
 for sw in SWITCHES:
     _NETWORK_DEVICES.append({"name": sw["name"], "ip": sw["ip"], "type": "switch"})
@@ -1053,10 +1057,12 @@ def _track_latency():
     while True:
         try:
             now = time.time()
-            wan_lat = _ping_latency("10.100.1.1", 2)
-            wan1_lat = _ping_latency("192.168.12.1", 2)
-            _latency_history["wan"].append({"time": now, "value": wan_lat if wan_lat else 0})
-            _latency_history["wan1"].append({"time": now, "value": wan1_lat if wan1_lat else 0})
+            wan_lat = _ping_latency(WAN_LATENCY_TARGET, 2) if WAN_LATENCY_TARGET else None
+            wan1_lat = _ping_latency(WAN1_LATENCY_TARGET, 2) if WAN1_LATENCY_TARGET else None
+            if wan_lat is not None:
+                _latency_history["wan"].append({"time": now, "value": wan_lat if wan_lat else 0})
+            if wan1_lat is not None:
+                _latency_history["wan1"].append({"time": now, "value": wan1_lat if wan1_lat else 0})
             cutoff = now - 600
             _latency_history["wan"] = [s for s in _latency_history["wan"] if s["time"] > cutoff]
             _latency_history["wan1"] = [s for s in _latency_history["wan1"] if s["time"] > cutoff]
