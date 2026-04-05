@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-import sqlite3, requests, os, urllib3, json, ssl, urllib.request, urllib.error, subprocess
+import sqlite3, requests, os, urllib3, json, ssl, urllib.request, urllib.error, subprocess, time, threading
 from dotenv import load_dotenv
 
 load_dotenv(dotenv_path="/opt/houseops/.env", override=True)
@@ -19,6 +19,23 @@ HA_TOKEN = os.getenv("HA_TOKEN", "")
 
 app = FastAPI(title="HouseOPS", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ─── In-Memory Cache ─────────────────────────────────────────
+
+class Cache:
+    def __init__(self):
+        self._data = {}
+
+    def get(self, key):
+        entry = self._data.get(key)
+        if entry and time.time() - entry["time"] < entry["ttl"]:
+            return entry["value"]
+        return None
+
+    def set(self, key, value, ttl=10):
+        self._data[key] = {"value": value, "time": time.time(), "ttl": ttl}
+
+cache = Cache()
 
 # ─── Helpers ───────────────────────────────────────────────
 
@@ -167,6 +184,10 @@ def get_switch_status(sw):
 
 @app.get("/api/dashboard")
 def api_dashboard():
+    cached = cache.get("dashboard")
+    if cached is not None:
+        return cached
+
     result = {"power": {}, "network": {}, "proxmox": {}}
     try:
         entities = ha_get("/states")
@@ -193,15 +214,29 @@ def api_dashboard():
     
     try:
         vms = pve_get("/cluster/resources?type=vm")
-        running = sum(1 for v in vms if v.get("status") == "running")
-        result["proxmox"] = {"vms_running": running, "vms_total": len(vms), "cpu_pct": 0, "ram_pct": 0}
+        running_vms = [v for v in vms if v.get("status") == "running"]
+        total_cpu = sum(v.get("cpu", 0) for v in running_vms)
+        total_ram = sum(v.get("mem", 0) for v in running_vms)
+        total_max_ram = sum(v.get("maxmem", 1) for v in running_vms)
+        cpu_pct = round((total_cpu / len(running_vms)) * 100, 1) if running_vms else 0
+        ram_pct = round((total_ram / total_max_ram) * 100, 1) if total_max_ram else 0
+        result["proxmox"] = {
+            "vms_running": len(running_vms),
+            "vms_total": len(vms),
+            "cpu_pct": cpu_pct,
+            "ram_pct": ram_pct,
+        }
     except:
-        result["proxmox"] = {"vms_running": 0, "vms_total": 0}
+        result["proxmox"] = {"vms_running": 0, "vms_total": 0, "cpu_pct": 0, "ram_pct": 0}
     
+    cache.set("dashboard", result, ttl=8)
     return result
 
 @app.get("/api/power")
 def api_power():
+    cached = cache.get("power")
+    if cached is not None:
+        return cached
     try:
         entities = ha_get("/states")
         power_entities = [e for e in entities if e.get("attributes", {}).get("unit_of_measurement") == "W"]
@@ -217,28 +252,63 @@ def api_power():
                 "watts": watts,
             })
         total = sum(d["watts"] for d in all_devices)
-        return {"total_watts": total, "active_devices": len(all_devices), "all": all_devices}
+        result = {"total_watts": total, "active_devices": len(all_devices), "all": all_devices}
     except Exception as e:
-        return {"total_watts": 0, "active_devices": 0, "all": [], "error": str(e)}
+        result = {"total_watts": 0, "active_devices": 0, "all": [], "error": str(e)}
+    cache.set("power", result, ttl=10)
+    return result
 
 @app.get("/api/proxmox/vms")
 def api_vms():
+    cached = cache.get("proxmox_vms")
+    if cached is not None:
+        return cached
     try:
         vms = pve_get("/cluster/resources?type=vm")
-        return {"vms": vms}
+        result_vms = []
+        for v in vms:
+            if v.get("status") != "running":
+                continue
+            cpu_pct = round(v.get("cpu", 0) * 100, 1)
+            mem_pct = round((v.get("mem", 0) / v.get("maxmem", 1)) * 100, 1) if v.get("maxmem") else 0
+            disk_pct = round((v.get("disk", 0) / v.get("maxdisk", 1)) * 100, 1) if v.get("maxdisk") else 0
+            uptime_sec = v.get("uptime", 0)
+            uptime_str = f"{uptime_sec // 86400}d {(uptime_sec % 86400) // 3600}h" if uptime_sec else "0h"
+            result_vms.append({
+                "vmid": v.get("vmid"),
+                "name": v.get("name", f"VM {v.get('vmid')}"),
+                "type": v.get("type", "qemu"),
+                "status": "running",
+                "cpu": cpu_pct,
+                "mem_pct": mem_pct,
+                "disk_pct": disk_pct,
+                "disk_total": v.get("maxdisk", 0),
+                "uptime": uptime_str,
+            })
+        result = {"vms": result_vms}
     except Exception as e:
-        return {"vms": [], "error": str(e)}
+        result = {"vms": [], "error": str(e)}
+    cache.set("proxmox_vms", result, ttl=15)
+    return result
 
 @app.get("/api/proxmox/storage")
 def api_storage():
+    cached = cache.get("proxmox_storage")
+    if cached is not None:
+        return cached
     try:
         storage = pve_get("/storage")
-        return {"storage": storage}
+        result = {"storage": storage}
     except Exception as e:
-        return {"storage": [], "error": str(e)}
+        result = {"storage": [], "error": str(e)}
+    cache.set("proxmox_storage", result, ttl=30)
+    return result
 
 @app.get("/api/network/clients")
 def api_net_clients():
+    cached = cache.get("net_clients")
+    if cached is not None:
+        return cached
     try:
         clients = unifi_get("/stat/sta")
         result = []
@@ -256,14 +326,19 @@ def api_net_clients():
                 "tx_rate": round(c.get("tx_rate", 0) / 1000, 1),
             })
         result.sort(key=lambda x: x["rx_rate"] + x["tx_rate"], reverse=True)
-        return {"clients": result, "total": len(result),
+        out = {"clients": result, "total": len(result),
                 "wifi": sum(1 for c in clients if not c.get("is_wired")),
                 "wired": sum(1 for c in clients if c.get("is_wired"))}
     except Exception as e:
-        return {"clients": [], "error": str(e)}
+        out = {"clients": [], "error": str(e)}
+    cache.set("net_clients", out, ttl=5)
+    return out
 
 @app.get("/api/network/devices")
 def api_net_devices():
+    cached = cache.get("net_devices")
+    if cached is not None:
+        return cached
     try:
         devices = unifi_get("/stat/device")
         result = []
@@ -279,12 +354,17 @@ def api_net_devices():
                 "clients": d.get("num_sta", 0),
                 "status": "online" if d.get("state", 1) == 1 else "offline",
             })
-        return {"devices": result}
+        out = {"devices": result}
     except Exception as e:
-        return {"devices": [], "error": str(e)}
+        out = {"devices": [], "error": str(e)}
+    cache.set("net_devices", out, ttl=10)
+    return out
 
 @app.get("/api/network/health")
 def api_net_health():
+    cached = cache.get("net_health")
+    if cached is not None:
+        return cached
     try:
         health = unifi_get("/stat/health")
         result = []
@@ -297,9 +377,11 @@ def api_net_health():
                 "rx_bytes_r": h.get("rx_bytes-r", 0),
                 "tx_bytes_r": h.get("tx_bytes-r", 0),
             })
-        return {"health": result}
+        out = {"health": result}
     except Exception as e:
-        return {"health": [], "error": str(e)}
+        out = {"health": [], "error": str(e)}
+    cache.set("net_health", out, ttl=10)
+    return out
 
 @app.get("/api/network/flows")
 def api_net_flows():
@@ -307,6 +389,9 @@ def api_net_flows():
 
 @app.get("/api/water")
 def api_water():
+    cached = cache.get("water")
+    if cached is not None:
+        return cached
     try:
         entities = ha_get("/states")
         water = []
@@ -319,18 +404,25 @@ def api_water():
                 except:
                     state = e["state"]
                 water.append({"name": attrs.get("friendly_name", e["entity_id"]), "state": state, "unit": unit})
-        return {"water": {"sensors": water}}
+        result = {"water": {"sensors": water}}
     except Exception as e:
-        return {"water": {"error": str(e)}}
+        result = {"water": {"error": str(e)}}
+    cache.set("water", result, ttl=15)
+    return result
 
 # ─── Switches API ─────────────────────────────────────────────
 
 @app.get("/api/switches")
 def api_switches():
+    cached = cache.get("switches")
+    if cached is not None:
+        return cached
     result = []
     for sw in SWITCHES:
         result.append(get_switch_status(sw))
-    return {"switches": result}
+    out = {"switches": result}
+    cache.set("switches", out, ttl=8)
+    return out
 
 @app.get("/api/switches/{switch_ip}/ports")
 def api_switch_ports(switch_ip: str):
@@ -343,9 +435,13 @@ def api_switch_ports(switch_ip: str):
 
 @app.get("/api/unifi")
 def api_unifi():
+    cached = cache.get("unifi")
+    if cached is not None:
+        return cached
     result = {"online": False, "error": "No response"}
     health_list = unifi_get("/stat/health")
     if not health_list:
+        cache.set("unifi", result, ttl=5)
         return result
     result["online"] = True
     result["health"] = {}
@@ -383,27 +479,76 @@ def api_unifi():
     if dashboard:
         latest = dashboard[0]
         result["latency_avg"] = latest.get("latency_avg", 0)
+        result["wan1_latency"] = latest.get("wan1_latency", 0)
     alarms = unifi_get("/stat/alarm")
     result["alarms"] = len(alarms)
+    cache.set("unifi", result, ttl=10)
     return result
 
 @app.get("/api/unifi/clients")
 def api_unifi_clients():
+    cached = cache.get("unifi_clients")
+    if cached is not None:
+        return cached
     clients = unifi_get("/stat/sta")
     if not clients:
-        return {"error": "No data", "clients": []}
-    result = []
-    for c in clients:
-        result.append({
-            "name": c.get("name", c.get("hostname", c.get("mac", "?"))),
-            "mac": c.get("mac", ""), "ip": c.get("ip", ""),
-            "is_wired": c.get("is_wired", False), "essid": c.get("essid", ""),
-            "rssi": c.get("rssi", 0), "rx_rate": c.get("rx_rate", 0),
-            "tx_rate": c.get("tx_rate", 0), "rx_bytes": c.get("rx_bytes", 0),
-            "tx_bytes": c.get("tx_bytes", 0),
-        })
-    result.sort(key=lambda x: x["rx_bytes"] + x["tx_bytes"], reverse=True)
-    return {"clients": result}
+        result = {"error": "No data", "clients": []}
+    else:
+        result = []
+        for c in clients:
+            result.append({
+                "name": c.get("name", c.get("hostname", c.get("mac", "?"))),
+                "mac": c.get("mac", ""), "ip": c.get("ip", ""),
+                "is_wired": c.get("is_wired", False), "essid": c.get("essid", ""),
+                "rssi": c.get("rssi", 0), "rx_rate": c.get("rx_rate", 0),
+                "tx_rate": c.get("tx_rate", 0), "rx_bytes": c.get("rx_bytes", 0),
+                "tx_bytes": c.get("tx_bytes", 0),
+            })
+        result.sort(key=lambda x: x["rx_bytes"] + x["tx_bytes"], reverse=True)
+        result = {"clients": result}
+    cache.set("unifi_clients", result, ttl=5)
+    return result
+
+# ─── Latency Tracker ──────────────────────────────────────────
+
+_latency_history = {"wan": [], "wan1": [], "max_samples": 120}
+
+def _ping_latency(host, count=2):
+    try:
+        r = subprocess.run(
+            ["ping", "-c", str(count), "-W", "2", host],
+            capture_output=True, text=True, timeout=10
+        )
+        output = r.stdout
+        for line in output.split('\n'):
+            if 'rtt' in line or 'round-trip' in line:
+                parts = line.split('/')
+                if len(parts) >= 5:
+                    return float(parts[4])
+        return None
+    except:
+        return None
+
+def _track_latency():
+    while True:
+        try:
+            now = time.time()
+            wan_lat = _ping_latency("10.100.1.1", 2)
+            wan1_lat = _ping_latency("192.168.12.1", 2)
+            _latency_history["wan"].append({"time": now, "value": wan_lat if wan_lat else 0})
+            _latency_history["wan1"].append({"time": now, "value": wan1_lat if wan1_lat else 0})
+            cutoff = now - 600
+            _latency_history["wan"] = [s for s in _latency_history["wan"] if s["time"] > cutoff]
+            _latency_history["wan1"] = [s for s in _latency_history["wan1"] if s["time"] > cutoff]
+        except:
+            pass
+        time.sleep(5)
+
+threading.Thread(target=_track_latency, daemon=True).start()
+
+@app.get("/api/latency")
+def api_latency():
+    return _latency_history
 
 # ─── Static Files ─────────────────────────────────────────────
 

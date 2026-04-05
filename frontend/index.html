@@ -25,6 +25,7 @@ if ('serviceWorker' in navigator) {
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;min-height:100dvh;padding-bottom:env(safe-area-inset-bottom,20px);touch-action:manipulation}
 .header{background:linear-gradient(135deg,#1e3a5f,#0a0e17);padding:max(env(safe-area-inset-top,10px),10px) clamp(12px,3vw,20px) 8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
+.header a{text-decoration:none;color:inherit}
 .header h1{font-size:clamp(1rem,3vw,1.3rem);font-weight:800}
 .header h1 span{color:var(--accent)}
 .toolbar{display:flex;align-items:center;gap:5px;padding:6px clamp(12px,3vw,20px);background:var(--card);border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none}
@@ -66,12 +67,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .badge.standby{background:rgba(148,163,184,0.15);color:var(--muted)}
 .badge.online{background:rgba(34,197,94,0.15);color:var(--green)}
 .badge.offline{background:rgba(239,68,68,0.15);color:var(--red)}
+.badge.poor{background:rgba(239,68,68,0.15);color:var(--red)}
+.badge.weak{background:rgba(249,115,22,0.15);color:var(--yellow)}
+.badge.good{background:rgba(234,179,8,0.15);color:var(--yellow)}
+.badge.verygood{background:rgba(34,197,94,0.15);color:var(--green)}
+.badge.excellent{background:rgba(6,182,212,0.15);color:var(--cyan)}
 .status-dot{display:inline-block;width:5px;height:5px;border-radius:50%;margin-right:3px}
 .status-dot.online{background:var(--green);box-shadow:0 0 3px var(--green)}
 .status-dot.offline{background:var(--red)}
 .client-table{width:100%;border-collapse:collapse;font-size:var(--fs-xs)}
-.client-table th{text-align:left;color:var(--muted);font-weight:600;padding:7px 4px;border-bottom:1px solid var(--border);font-size:0.55rem;white-space:nowrap;text-transform:uppercase;cursor:pointer}
+.client-table th{text-align:left;color:var(--muted);font-weight:600;padding:7px 4px;border-bottom:1px solid var(--border);font-size:0.55rem;white-space:nowrap;text-transform:uppercase;cursor:pointer;user-select:none}
 .client-table th:hover{color:var(--accent)}
+.client-table th .sort-arrow{margin-left:2px;font-size:0.5rem}
 .client-table td{padding:7px 4px;border-bottom:1px solid var(--border);vertical-align:middle}
 .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .vm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px}
@@ -92,12 +99,18 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .bar-fill{height:100%;border-radius:3px;transition:width 0.5s ease}
 .bar-value{width:42px;text-align:right;font-size:var(--fs-xs);font-weight:700;flex-shrink:0}
 .loading{text-align:center;padding:30px;color:var(--muted);font-size:var(--fs-md)}
+.heatmap-container{margin-top:8px}
+.heatmap-row{display:flex;align-items:center;margin-bottom:4px}
+.heatmap-label{width:60px;font-size:var(--fs-xs);color:var(--muted);flex-shrink:0}
+.heatmap-bars{display:flex;gap:1px;flex:1;height:20px}
+.heatmap-bar{flex:1;min-width:2px;border-radius:1px;transition:background 0.3s}
+.heatmap-scale{display:flex;justify-content:space-between;font-size:0.5rem;color:var(--muted);margin-top:2px}
 @media(max-width:430px){:root{--cols:1}.card.span-full{grid-column:span 1}.exec-kpi-row{display:flex;overflow-x:auto;gap:4px}.exec-kpi{flex:0 0 auto;min-width:60px;flex-direction:row;gap:4px;min-height:36px}.exec-kpi .label{display:none}}
 @media(min-width:481px) and (max-width:768px){:root{--cols:2}}
 </style>
 </head>
 <body>
-<div class="header"><a href="/" style="text-decoration:none;color:inherit"><h1><span>House</span>OPS</h1></a><div class="meta"><div class="status"><div class="status-dot online"></div>Live</div><div class="refresh" id="lastUpdate">Loading...</div></div></div>
+<div class="header"><a href="/"><h1><span>House</span>OPS</h1></a><div class="meta"><div class="status"><div class="status-dot online"></div>Live</div><div class="refresh" id="lastUpdate">Loading...</div></div></div>
 <div class="toolbar">
   <button class="btn" onclick="expandAll()">⊞ Expand</button>
   <button class="btn" onclick="collapseAll()">⊟ Collapse</button>
@@ -120,6 +133,16 @@ const KWH_COST = 0.15;
 let donutChart = null;
 let collapsedCards = JSON.parse(localStorage.getItem('ho_collapsed') || '[]');
 let currentCols = parseInt(localStorage.getItem('ho_cols') || '3');
+let ucSortState = JSON.parse(localStorage.getItem('ho_uc_sort') || '{"k":"rx_rate","d":true}');
+let firstLoad = true;
+let refreshController = null;
+const FETCH_TIMEOUT = 4000;
+
+function fetchWithTimeout(url, timeout = FETCH_TIMEOUT) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  return fetch(url, { signal: controller.signal }).then(r => { clearTimeout(id); return r.json(); }).catch(e => { clearTimeout(id); if (e.name === 'AbortError') return {}; throw e; });
+}
 
 function fmtBytes(b){if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'}
 function categorizeDevice(name,entity){const n=(name+' '+entity).toLowerCase();if(n.includes('ups'))return{room:'Office',category:'UPS/Backup',icon:'🔋'};if(n.includes('tv'))return{room:'Living Room',category:'Entertainment',icon:'📺'};if(n.includes('light')||n.includes('lamp'))return{room:'Lighting',category:'Lights',icon:'💡'};if(n.includes('camera')||n.includes('cam')||n.includes('tapo'))return{room:'Security',category:'Cameras',icon:'📷'};if(n.includes('switch')||n.includes('router')||n.includes('ap '))return{room:'Network',category:'Network',icon:'📡'};if(n.includes('fridge')||n.includes('freezer'))return{room:'Kitchen',category:'Appliances',icon:'🧊'};if(n.includes('server')||n.includes('nas')||n.includes('proxmox'))return{room:'Server',category:'Computing',icon:'🖥️'};return{room:'Other',category:'Other',icon:'📦'}}
@@ -130,20 +153,25 @@ function expandAll(){document.querySelectorAll('.card').forEach(c=>c.classList.r
 function collapseAll(){document.querySelectorAll('.card').forEach(c=>c.classList.add('collapsed'));collapsedCards=Array.from(document.querySelectorAll('.card')).map(c=>c.id);localStorage.setItem('ho_collapsed',JSON.stringify(collapsedCards))}
 function resetLayout(){collapsedCards=[];localStorage.removeItem('ho_collapsed');setCols(3);load()}
 function cardWrap(id,icon,title,body,span){const cls=collapsedCards.includes(id)?'card collapsed':'card';const sp=span?' '+span:'';return '<div id="'+id+'" class="'+cls+sp+'"><h2 onclick="toggleCard(\''+id+'\')"><span class="icon">'+icon+'</span>'+title+'</h2><div class="card-body">'+body+'</div></div>'}
+function latencyColor(ms){if(!ms&&ms!==0)return'var(--border)';if(ms<20)return'var(--green)';if(ms<50)return'var(--cyan)';if(ms<100)return'var(--yellow)';if(ms<200)return'var(--orange)';return'var(--red)'}
+function fmtBps(bps){if(!bps||bps<=0)return'0 bps';if(bps<1000)return bps.toFixed(0)+' bps';if(bps<1000000)return(bps/1000).toFixed(1)+' Kbps';if(bps<1000000000)return(bps/1000000).toFixed(2)+' Mbps';return(bps/1000000000).toFixed(2)+' Gbps'}
 
 async function load(){
+  if(refreshController) refreshController.abort();
+  refreshController = new AbortController();
   try{
-    const [dash,power,vms,clients,netDevices,storage,water,switches,unifi,unifiClients]=await Promise.all([
-      fetch(API+'/api/dashboard').then(r=>r.json()),
-      fetch(API+'/api/power').then(r=>r.json()),
-      fetch(API+'/api/proxmox/vms').then(r=>r.json()),
-      fetch(API+'/api/network/clients').then(r=>r.json()),
-      fetch(API+'/api/network/devices').then(r=>r.json()),
-      fetch(API+'/api/proxmox/storage').then(r=>r.json()),
-      fetch(API+'/api/water').then(r=>r.json()),
-      fetch(API+'/api/switches').then(r=>r.json()),
-      fetch(API+'/api/unifi').then(r=>r.json()),
-      fetch(API+'/api/unifi/clients').then(r=>r.json())
+    const [dash,power,vms,clients,netDevices,storage,water,switches,unifi,unifiClients,latency]=await Promise.all([
+      fetchWithTimeout(API+'/api/dashboard'),
+      fetchWithTimeout(API+'/api/power'),
+      fetchWithTimeout(API+'/api/proxmox/vms'),
+      fetchWithTimeout(API+'/api/network/clients'),
+      fetchWithTimeout(API+'/api/network/devices'),
+      fetchWithTimeout(API+'/api/proxmox/storage'),
+      fetchWithTimeout(API+'/api/water'),
+      fetchWithTimeout(API+'/api/switches'),
+      fetchWithTimeout(API+'/api/unifi'),
+      fetchWithTimeout(API+'/api/unifi/clients'),
+      fetchWithTimeout(API+'/api/latency').catch(()=>({wan:[],wan1:[]}))
     ]);
 
     document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
@@ -157,120 +185,230 @@ async function load(){
     const waterToday=water.sensors?water.sensors.find(s=>s.name.includes('total gallons today')):null;
     const waterCap=water.sensors?water.sensors.find(s=>s.name.includes('capacity remaining')):null;
 
-    let kpis='';
-    kpis+='<div class="exec-kpi"><span class="icon">⚡</span><div class="value" style="color:var(--accent)">'+totalW.toFixed(0)+'W</div><div class="label">Power</div></div>';
-    kpis+='<div class="exec-kpi"><span class="icon">💰</span><div class="value" style="color:var(--yellow)">$'+monthlyCost.toFixed(0)+'</div><div class="label">Monthly</div></div>';
-    kpis+='<div class="exec-kpi"><span class="icon">🌐</span><div class="value" style="color:var(--green)">'+(n.total_clients||0)+'</div><div class="label">Devices</div></div>';
-    kpis+='<div class="exec-kpi"><span class="icon">📦</span><div class="value" style="color:var(--cyan)">'+(px.vms_running||0)+'</div><div class="label">VMs</div></div>';
-    kpis+='<div class="exec-kpi"><span class="icon">🖥️</span><div class="value" style="color:'+(px.cpu_pct>70?'var(--red)':'var(--green)')+'">'+(px.cpu_pct||0)+'%</div><div class="label">CPU</div></div>';
-    if(waterToday)kpis+='<div class="exec-kpi"><span class="icon">💧</span><div class="value" style="color:var(--cyan)">'+waterToday.state+'</div><div class="label">Gal Today</div></div>';
-    document.getElementById('execKpis').innerHTML=kpis;
+    if(firstLoad){
+      let html='';
 
-    let alerts='';
-    if(totalW>1000)alerts+='<div class="exec-alert critical">⚡ High: '+totalW.toFixed(0)+'W</div>';
-    else if(totalW>500)alerts+='<div class="exec-alert warn">⚡ Moderate: '+totalW.toFixed(0)+'W</div>';
-    else alerts+='<div class="exec-alert ok">⚡ Normal: '+totalW.toFixed(0)+'W</div>';
-    if(top3.length){alerts+='<div class="exec-alert info">🔥 Top consumers:</div>';top3.forEach(d=>{const pct=totalW>0?(d.watts/totalW*100).toFixed(1):0;alerts+='<div class="insight-box"><span style="font-weight:700">'+d.name+'</span> <span style="color:var(--muted)">· '+d.watts.toFixed(0)+'W · '+pct+'%</span></div>'})}
-    if(standbyDevices.length>3)alerts+='<div class="exec-alert warn">👻 '+standbyDevices.length+' standby</div>';
-    const netDown=n.wan_down_bps||0;
-    alerts+='<div class="exec-alert '+(netDown>1000000?'warn':'ok')+'">📶 '+(netDown>1000000?(netDown/1000000).toFixed(1)+' Mbps':(netDown/1000).toFixed(0)+' Kbps')+'</div>';
-    alerts+='<div class="exec-alert ok">📦 '+(px.vms_running||0)+'/'+(px.vms_total||0)+' VMs</div>';
-    if(unifi&&unifi.online){const uc=unifi.total_clients||0;alerts+='<div class="exec-alert ok">📡 '+uc+' UniFi clients</div>'}
-    document.getElementById('execAlerts').innerHTML=alerts;
+      // POWER
+      const yearlyKwh=dailyKwh*365;const yearlyCost=yearlyKwh*KWH_COST;const peakD=wattsDevices[0]||{name:'N/A',watts:0};const standbyCost=(standbyW/1000)*24*30*KWH_COST;
+      html+=cardWrap('card-power','⚡','Power Usage','<div class="big-stat"><span class="number" id="v-power-w" style="color:var(--accent)">'+totalW.toFixed(0)+'</span><span class="unit">W</span><div class="label" id="v-power-devs">'+(p.active_devices||0)+' active devices</div></div><div class="stat-row"><span class="stat-label">Est. Daily</span><span class="stat-value" id="v-power-daily">'+dailyKwh.toFixed(1)+' kWh · $'+dailyCost.toFixed(2)+'</span></div><div class="stat-row"><span class="stat-label">Est. Monthly</span><span class="stat-value" id="v-power-monthly">'+dailyKwh.toFixed(0)+' kWh · $'+monthlyCost.toFixed(2)+'</span></div><div class="stat-row"><span class="stat-label">Est. Yearly</span><span class="stat-value" id="v-power-yearly">'+yearlyKwh.toFixed(0)+' kWh · $'+yearlyCost.toFixed(2)+'</span></div><div class="stat-row"><span class="stat-label">Peak Device</span><span class="stat-value" id="v-power-peak">'+peakD.name+' · '+peakD.watts.toFixed(0)+'W</span></div><div class="stat-row"><span class="stat-label">Standby</span><span class="stat-value" id="v-power-standby">'+standbyDevices.length+' devices · $'+standbyCost.toFixed(2)+'/mo</span></div>');
 
-    let html='';
+      // POWER INSIGHTS
+      if(wattsDevices.length){
+        let insights='';
+        if(top3.length){insights+='<div class="insight-box">🔥 Top consumers:</div>';top3.forEach(d=>{const pct=totalW>0?(d.watts/totalW*100).toFixed(1):0;insights+='<div class="insight-box" style="padding:4px 9px;margin-bottom:2px"><span style="font-weight:700">'+d.name+'</span> <span style="color:var(--muted)">· '+d.watts.toFixed(0)+'W · '+pct+'%</span></div>'})}
+        html+=cardWrap('card-power-insights','💡','Power Insights',insights);
+      }
 
-    const yearlyKwh=dailyKwh*365;const yearlyCost=yearlyKwh*KWH_COST;const peakD=wattsDevices[0]||{name:'N/A',watts:0};const standbyCost=(standbyW/1000)*24*30*KWH_COST;
-    html+=cardWrap('card-power','⚡','Power Usage','<div class="big-stat"><span class="number" style="color:var(--accent)">'+totalW.toFixed(0)+'</span><span class="unit">W</span><div class="label">'+(p.active_devices||0)+' active devices</div></div><div class="stat-row"><span class="stat-label">Est. Daily</span><span class="stat-value">'+dailyKwh.toFixed(1)+' kWh · $'+dailyCost.toFixed(2)+'</span></div><div class="stat-row"><span class="stat-label">Est. Monthly</span><span class="stat-value">'+dailyKwh.toFixed(0)+' kWh · $'+monthlyCost.toFixed(2)+'</span></div><div class="stat-row"><span class="stat-label">Est. Yearly</span><span class="stat-value">'+yearlyKwh.toFixed(0)+' kWh · $'+yearlyCost.toFixed(2)+'</span></div><div class="stat-row"><span class="stat-label">Peak Device</span><span class="stat-value">'+peakD.name+' · '+peakD.watts.toFixed(0)+'W</span></div><div class="stat-row"><span class="stat-label">Standby</span><span class="stat-value">'+standbyDevices.length+' devices · $'+standbyCost.toFixed(2)+'/mo</span></div>');
+      // POWER BY CATEGORY
+      if(wattsDevices.length){
+        const byCat={};wattsDevices.forEach(d=>{const cat=categorizeDevice(d.name,d.entity);if(!byCat[cat.category])byCat[cat.category]={watts:0,devices:0,icon:cat.icon};byCat[cat.category].watts+=d.watts;byCat[cat.category].devices++});
+        const catEntries=Object.entries(byCat).sort((a,b)=>b[1].watts-a[1].watts);
+        let donutHtml='<div class="donut-container"><canvas id="donutChart"></canvas><div class="donut-legend">';
+        catEntries.forEach(([cat,data],i)=>{const pct=(data.watts/totalW*100).toFixed(0);donutHtml+='<div class="legend-item"><div class="legend-dot" style="background:'+COLORS[i%COLORS.length]+'"></div><span class="legend-name">'+data.icon+' '+cat+' ('+data.devices+')</span><span class="legend-pct">'+data.watts.toFixed(0)+'W ('+pct+'%)</span></div>'});
+        donutHtml+='</div></div>';
+        html+=cardWrap('card-power-cat','🍩','Power by Category',donutHtml);
+        window._donutData={labels:catEntries.map(([c])=>c),data:catEntries.map(([,d])=>d.watts),colors:catEntries.map((_,i)=>COLORS[i%COLORS.length])};
+      }
 
-    if(wattsDevices.length){
-      let insights='';
-      if(top3.length){insights+='<div class="insight-box">🔥 Top consumers:</div>';top3.forEach(d=>{const pct=totalW>0?(d.watts/totalW*100).toFixed(1):0;insights+='<div class="insight-box" style="padding:4px 9px;margin-bottom:2px"><span style="font-weight:700">'+d.name+'</span> <span style="color:var(--muted)">· '+d.watts.toFixed(0)+'W · '+pct+'%</span></div>'})}
-      html+=cardWrap('card-power-insights','💡','Power Insights',insights);
+      // POWER BY ROOM
+      if(wattsDevices.length){
+        const byRoom={};wattsDevices.forEach(d=>{const cat=categorizeDevice(d.name,d.entity);if(!byRoom[cat.room])byRoom[cat.room]={watts:0,devices:[],icon:cat.icon};byRoom[cat.room].watts+=d.watts;byRoom[cat.room].devices.push({name:d.name,watts:d.watts,category:cat.category})});
+        const roomEntries=Object.entries(byRoom).sort((a,b)=>b[1].watts-a[1].watts);
+        let roomHtml='';
+        roomEntries.forEach(([room,data])=>{const pct=(data.watts/totalW*100).toFixed(0);roomHtml+='<div class="bar-label" style="font-weight:700;color:var(--accent);padding:5px 0 4px;border-bottom:1px solid var(--border);margin-top:5px">'+data.icon+' '+room+'<span style="color:var(--muted);font-weight:400;font-size:0.55rem;float:right">'+data.watts.toFixed(0)+'W ('+pct+'%) · '+data.devices.length+'</span></div>';const maxW=data.devices[0].watts;data.devices.forEach((d,i)=>{const pl=powerLevel(d.watts);const barPct=maxW>0?(d.watts/maxW*100):0;const c=COLORS[i%COLORS.length];roomHtml+='<div class="bar-item"><span class="bar-label" title="'+d.name+'">'+d.name+'</span><div class="bar-track"><div class="bar-fill" style="width:'+barPct+'%;background:'+c+'"></div></div><span class="bar-value" style="color:'+c+'">'+d.watts.toFixed(0)+'W</span><span class="badge '+pl.cls+'">'+pl.label+'</span></div>'})});
+        html+=cardWrap('card-power-room','🏠','Power by Room',roomHtml,'span-full');
+      }
+
+      // NETWORK
+      const wanDown=n.wan_down_bps||0;const wanUp=n.wan_up_bps||0;
+      html+=cardWrap('card-network','🌐','Network','<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px"><div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--green)" id="v-net-total">'+(n.total_clients||0)+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Total</div></div><div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--accent)" id="v-net-wifi">'+(n.wifi||0)+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">WiFi</div></div><div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--cyan)" id="v-net-wired">'+(n.wired||0)+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Wired</div></div></div><div class="stat-row"><span class="stat-label" style="color:var(--cyan)">↓ WAN</span><span class="stat-value" id="v-wan-down" style="color:var(--cyan);font-weight:800">'+fmtBps(wanDown)+'</span></div><div class="stat-row"><span class="stat-label" style="color:var(--orange)">↑ WAN</span><span class="stat-value" id="v-wan-up" style="color:var(--orange);font-weight:800">'+fmtBps(wanUp)+'</span></div><div style="text-align:center;margin-top:6px"><a href="/network" style="color:var(--accent);font-size:var(--fs-xs);text-decoration:none;font-weight:600">→ Full Network Map</a></div>');
+
+      // PROXMOX VMS (only running)
+      if(vms.vms&&vms.vms.length){
+        let vmHtml='';
+        vms.vms.forEach(v=>{
+          const cpuColor=v.cpu>70?'var(--red)':v.cpu>40?'var(--yellow)':'var(--green)';
+          const memColor=v.mem_pct>80?'var(--red)':v.mem_pct>50?'var(--yellow)':'var(--green)';
+          const diskColor=v.disk_pct>80?'var(--red)':v.disk_pct>50?'var(--yellow)':'var(--green)';
+          const icon=v.type==='lxc'?'📦':'🖥️';
+          const diskGb=(v.disk_total/1073741824).toFixed(1);
+          vmHtml+='<div class="vm-card"><div class="name">'+icon+' '+v.name+'</div><div class="detail">CPU: <span style="color:'+cpuColor+';font-weight:700">'+v.cpu+'%</span> · RAM: <span style="color:'+memColor+';font-weight:700">'+v.mem_pct+'%</span></div><div class="detail">Disk: <span style="color:'+diskColor+';font-weight:700">'+v.disk_pct+'%</span> · '+diskGb+'GB</div><div class="detail">Uptime: '+v.uptime+'</div></div>';
+        });
+        html+=cardWrap('card-vms','📦','Proxmox VMs ('+vms.vms.length+' running)','<div class="vm-grid">'+vmHtml+'</div>');
+      }
+
+      // UNIFI
+      if(unifi&&unifi.online){
+        const h=unifi.health||{};const wan=h.wan||{};const wan1=h.wan1||{};const wlan=h.wlan||{};
+        let uHtml='<div class="stat-row"><span class="stat-label">Name</span><span class="stat-value" id="v-unifi-name">'+(unifi.name||'Dream Router')+'</span></div>';
+        uHtml+='<div class="stat-row"><span class="stat-label">Version</span><span class="stat-value" id="v-unifi-ver">'+(unifi.version||'?')+'</span></div>';
+        if(wan.wan_ip)uHtml+='<div class="stat-row"><span class="stat-label">WAN IP</span><span class="stat-value" id="v-unifi-wanip">'+wan.wan_ip+'</span></div>';
+        if(wan1.wan_ip)uHtml+='<div class="stat-row"><span class="stat-label">WAN1 IP</span><span class="stat-value" id="v-unifi-wan1ip">'+wan1.wan_ip+'</span></div>';
+        uHtml+='<div class="stat-row"><span class="stat-label">WLAN</span><span class="stat-value" id="v-unifi-wlan" style="color:var(--green)">'+(wlan.num_user||0)+' users · '+(wlan.num_ap||0)+' APs</span></div>';
+        uHtml+='<div class="stat-row"><span class="stat-label">Clients</span><span class="stat-value" id="v-unifi-clients">'+(unifi.wifi_clients||0)+' WiFi · '+(unifi.wired_clients||0)+' wired</span></div>';
+        if(unifi.latency_avg)uHtml+='<div class="stat-row"><span class="stat-label">WAN Latency</span><span class="stat-value" id="v-unifi-lat">'+unifi.latency_avg.toFixed(0)+'ms</span></div>';
+        uHtml+='<div class="stat-row"><span class="stat-label">Alarms</span><span class="stat-value" id="v-unifi-alarms" style="color:'+(unifi.alarms>0?'var(--red)':'var(--green)')+'">'+(unifi.alarms||0)+'</span></div>';
+        html+=cardWrap('card-unifi','📡','UniFi Dream Router',uHtml);
+      }
+
+      // LATENCY HEATMAP (WAN = gateway ping, WAN1 = ISP ping)
+      if(latency&&(latency.wan.length||latency.wan1.length)){
+        let latHtml='<div class="heatmap-container">';
+        if(latency.wan&&latency.wan.length){
+          latHtml+='<div class="heatmap-row"><span class="heatmap-label">WAN GW</span><div class="heatmap-bars" id="heatmap-wan">';
+          latency.wan.forEach(s=>{latHtml+='<div class="heatmap-bar" style="background:'+latencyColor(s.value)+'" title="'+(s.value||0).toFixed(0)+'ms"></div>'});
+          latHtml+='</div></div>';
+        }
+        if(latency.wan1&&latency.wan1.length){
+          latHtml+='<div class="heatmap-row"><span class="heatmap-label">WAN1 ISP</span><div class="heatmap-bars" id="heatmap-wan1">';
+          latency.wan1.forEach(s=>{latHtml+='<div class="heatmap-bar" style="background:'+latencyColor(s.value)+'" title="'+(s.value||0).toFixed(0)+'ms"></div>'});
+          latHtml+='</div></div>';
+        }
+        latHtml+='<div class="heatmap-scale"><span>0ms</span><span>50ms</span><span>100ms</span><span>200ms+</span></div></div>';
+        html+=cardWrap('card-latency','📊','Latency (10 min) — WAN GW / WAN1 ISP',latHtml,'span-full');
+      }
+
+      // LIVE CLIENTS (sortable table)
+      if(unifiClients&&unifiClients.clients){
+        window._uc=unifiClients.clients;
+        window._ucSort=ucSortState;
+        let cHtml='<input type="text" id="ucSearch" placeholder="Search..." style="width:100%;padding:6px 10px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:var(--fs-xs)" oninput="_renderUC()">';
+        cHtml+='<div class="table-scroll"><table class="client-table"><thead><tr>';
+        cHtml+='<th onclick="_sortUC(\'#\')" data-sort="#">#<span class="sort-arrow" id="th-#"></span></th>';
+        cHtml+='<th onclick="_sortUC(\'name\')" data-sort="name">Client<span class="sort-arrow" id="th-name"></span></th>';
+        cHtml+='<th onclick="_sortUC(\'ip\')" data-sort="ip">IP<span class="sort-arrow" id="th-ip"></span></th>';
+        cHtml+='<th onclick="_sortUC(\'is_wired\')" data-sort="is_wired">Conn<span class="sort-arrow" id="th-is_wired"></span></th>';
+        cHtml+='<th onclick="_sortUC(\'rssi\')" data-sort="rssi">Signal<span class="sort-arrow" id="th-rssi"></span></th>';
+        cHtml+='<th onclick="_sortUC(\'rx_rate\')" data-sort="rx_rate">↓ Rate<span class="sort-arrow" id="th-rx_rate"></span></th>';
+        cHtml+='<th onclick="_sortUC(\'tx_rate\')" data-sort="tx_rate">↑ Rate<span class="sort-arrow" id="th-tx_rate"></span></th>';
+        cHtml+='<th onclick="_sortUC(\'rx_bytes\')" data-sort="rx_bytes">Total<span class="sort-arrow" id="th-rx_bytes"></span></th>';
+        cHtml+='</tr></thead><tbody id="ucBody"></tbody></table></div>';
+        cHtml+='<div style="text-align:center;margin-top:8px;font-size:var(--fs-xs);color:var(--muted)" id="ucCount"></div>';
+        html+=cardWrap('card-live-clients','📶','Live Clients',cHtml,'span-full');
+        setTimeout(_renderUC,100);
+      }
+
+      // SWITCHES
+      if(switches&&switches.switches){
+        let sHtml='';
+        switches.switches.forEach(sw=>{const sc=sw.online?'online':'offline';const st=sw.online?'Online':'Offline';sHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot '+sc+'"></span>'+sw.name+' ('+sw.ip+')</span><span class="stat-value" style="color:var(--'+(sc==='online'?'green':'red')+')">'+st+'</span></div>';if(sw.online){sHtml+='<div class="stat-row"><span class="stat-label">Ports</span><span class="stat-value">'+sw.ports_up+' up / '+sw.ports_down+' down</span></div>';sHtml+='<div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value">'+sw.uptime_days+' days</span></div>'}});
+        sHtml+='<div style="text-align:center;margin-top:8px"><a href="/switches" style="color:var(--accent);font-size:var(--fs-xs);text-decoration:none;font-weight:600">→ Full Switch Details</a></div>';
+        html+=cardWrap('card-switches','🔌','Network Switches',sHtml);
+      }
+
+      document.getElementById('dashboard').innerHTML=html;
+      collapsedCards.forEach(id=>{const el=document.getElementById(id);if(el)el.classList.add('collapsed')});
+
+      if(window._donutData){
+        const ctx=document.getElementById('donutChart');
+        if(ctx){if(donutChart)donutChart.destroy();donutChart=new Chart(ctx,{type:'doughnut',data:{labels:window._donutData.labels,datasets:[{data:window._donutData.data,backgroundColor:window._donutData.colors,borderWidth:0}]},options:{responsive:true,cutout:'65%',plugins:{legend:{display:false}}}})}
+      }
+
+      setCols(currentCols);
+      updateExecSummary(dash,power,vms,unifi);
+      firstLoad=false;
+    } else {
+      // Smooth update: only change values, don't rebuild DOM
+      const el=(id)=>document.getElementById(id);
+      if(el('v-power-w'))el('v-power-w').textContent=totalW.toFixed(0);
+      if(el('v-power-devs'))el('v-power-devs').textContent=(p.active_devices||0)+' active devices';
+      if(el('v-power-daily'))el('v-power-daily').textContent=dailyKwh.toFixed(1)+' kWh · $'+dailyCost.toFixed(2);
+      if(el('v-power-monthly'))el('v-power-monthly').textContent=dailyKwh.toFixed(0)+' kWh · $'+monthlyCost.toFixed(2);
+      if(el('v-power-yearly'))el('v-power-yearly').textContent=yearlyKwh.toFixed(0)+' kWh · $'+yearlyCost.toFixed(2);
+      if(el('v-power-peak'))el('v-power-peak').textContent=(peakD?peakD.name:'N/A')+' · '+(peakD?peakD.watts.toFixed(0):'0')+'W';
+      if(el('v-power-standby'))el('v-power-standby').textContent=standbyDevices.length+' devices · $'+standbyCost.toFixed(2)+'/mo';
+      if(el('v-net-total'))el('v-net-total').textContent=n.total_clients||0;
+      if(el('v-net-wifi'))el('v-net-wifi').textContent=n.wifi||0;
+      if(el('v-net-wired'))el('v-net-wired').textContent=n.wired||0;
+      if(el('v-wan-down'))el('v-wan-down').textContent=fmtBps(wanDown);
+      if(el('v-wan-up'))el('v-wan-up').textContent=fmtBps(wanUp);
+
+      // Update latency heatmap bars
+      if(latency){
+        if(latency.wan&&latency.wan.length){
+          const wanBars=document.getElementById('heatmap-wan');
+          if(wanBars){
+            let bars='';
+            latency.wan.forEach(s=>{bars+='<div class="heatmap-bar" style="background:'+latencyColor(s.value)+'" title="'+(s.value||0).toFixed(0)+'ms"></div>'});
+            wanBars.innerHTML=bars;
+          }
+        }
+        if(latency.wan1&&latency.wan1.length){
+          const wan1Bars=document.getElementById('heatmap-wan1');
+          if(wan1Bars){
+            let bars='';
+            latency.wan1.forEach(s=>{bars+='<div class="heatmap-bar" style="background:'+latencyColor(s.value)+'" title="'+(s.value||0).toFixed(0)+'ms"></div>'});
+            wan1Bars.innerHTML=bars;
+          }
+        }
+      }
+
+      // Update client table without rebuilding
+      if(unifiClients&&unifiClients.clients){
+        window._uc=unifiClients.clients;
+        _renderUC();
+      }
+
+      // Update VM cards in-place
+      if(vms.vms&&vms.vms.length){
+        vms.vms.forEach(v=>{
+          const card=document.querySelector('#card-vms .vm-card');
+          if(card){
+            const nameEl=card.querySelector('.name');
+            if(nameEl&&nameEl.textContent.includes(v.name)){
+              const details=card.querySelectorAll('.detail');
+              if(details[0]){const cpuColor=v.cpu>70?'var(--red)':v.cpu>40?'var(--yellow)':'var(--green)';const memColor=v.mem_pct>80?'var(--red)':v.mem_pct>50?'var(--yellow)':'var(--green)';details[0].innerHTML='CPU: <span style="color:'+cpuColor+';font-weight:700">'+v.cpu+'%</span> · RAM: <span style="color:'+memColor+';font-weight:700">'+v.mem_pct+'%</span>'}
+              if(details[1]){const diskColor=v.disk_pct>80?'var(--red)':v.disk_pct>50?'var(--yellow)':'var(--green)';const diskGb=(v.disk_total/1073741824).toFixed(1);details[1].innerHTML='Disk: <span style="color:'+diskColor+';font-weight:700">'+v.disk_pct+'%</span> · '+diskGb+'GB'}
+              if(details[2])details[2].textContent='Uptime: '+v.uptime;
+            }
+          }
+        });
+      }
+
+      updateExecSummary(dash,power,vms,unifi);
     }
-
-    if(wattsDevices.length){
-      const byCat={};wattsDevices.forEach(d=>{const cat=categorizeDevice(d.name,d.entity);if(!byCat[cat.category])byCat[cat.category]={watts:0,devices:0,icon:cat.icon};byCat[cat.category].watts+=d.watts;byCat[cat.category].devices++});
-      const catEntries=Object.entries(byCat).sort((a,b)=>b[1].watts-a[1].watts);
-      let donutHtml='<div class="donut-container"><canvas id="donutChart"></canvas><div class="donut-legend">';
-      catEntries.forEach(([cat,data],i)=>{const pct=(data.watts/totalW*100).toFixed(0);donutHtml+='<div class="legend-item"><div class="legend-dot" style="background:'+COLORS[i%COLORS.length]+'"></div><span class="legend-name">'+data.icon+' '+cat+' ('+data.devices+')</span><span class="legend-pct">'+data.watts.toFixed(0)+'W ('+pct+'%)</span></div>'});
-      donutHtml+='</div></div>';
-      html+=cardWrap('card-power-cat','🍩','Power by Category',donutHtml);
-      window._donutData={labels:catEntries.map(([c])=>c),data:catEntries.map(([,d])=>d.watts),colors:catEntries.map((_,i)=>COLORS[i%COLORS.length])};
-    }
-
-    if(wattsDevices.length){
-      const byRoom={};wattsDevices.forEach(d=>{const cat=categorizeDevice(d.name,d.entity);if(!byRoom[cat.room])byRoom[cat.room]={watts:0,devices:[],icon:cat.icon};byRoom[cat.room].watts+=d.watts;byRoom[cat.room].devices.push({name:d.name,watts:d.watts,category:cat.category})});
-      const roomEntries=Object.entries(byRoom).sort((a,b)=>b[1].watts-a[1].watts);
-      let roomHtml='';
-      roomEntries.forEach(([room,data])=>{const pct=(data.watts/totalW*100).toFixed(0);roomHtml+='<div class="bar-label" style="font-weight:700;color:var(--accent);padding:5px 0 4px;border-bottom:1px solid var(--border);margin-top:5px">'+data.icon+' '+room+'<span style="color:var(--muted);font-weight:400;font-size:0.55rem;float:right">'+data.watts.toFixed(0)+'W ('+pct+'%) · '+data.devices.length+'</span></div>';const maxW=data.devices[0].watts;data.devices.forEach((d,i)=>{const pl=powerLevel(d.watts);const barPct=maxW>0?(d.watts/maxW*100):0;const c=COLORS[i%COLORS.length];roomHtml+='<div class="bar-item"><span class="bar-label" title="'+d.name+'">'+d.name+'</span><div class="bar-track"><div class="bar-fill" style="width:'+barPct+'%;background:'+c+'"></div></div><span class="bar-value" style="color:'+c+'">'+d.watts.toFixed(0)+'W</span><span class="badge '+pl.cls+'">'+pl.label+'</span></div>'})});
-      html+=cardWrap('card-power-room','🏠','Power by Room',roomHtml,'span-full');
-    }
-
-    const wanDown=n.wan_down_bps||0;const wanUp=n.wan_up_bps||0;
-    function fmtBps(bps){if(!bps||bps<=0)return'0 bps';if(bps<1000)return bps.toFixed(0)+' bps';if(bps<1000000)return(bps/1000).toFixed(1)+' Kbps';if(bps<1000000000)return(bps/1000000).toFixed(2)+' Mbps';return(bps/1000000000).toFixed(2)+' Gbps'}
-    html+=cardWrap('card-network','🌐','Network','<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px"><div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--green)">'+(n.total_clients||0)+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Total</div></div><div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--accent)">'+(n.wifi||0)+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">WiFi</div></div><div style="background:var(--border);border-radius:6px;padding:8px 4px;text-align:center"><div style="font-size:var(--fs-md);font-weight:800;color:var(--cyan)">'+(n.wired||0)+'</div><div style="font-size:0.52rem;color:var(--muted);margin-top:2px">Wired</div></div></div><div class="stat-row"><span class="stat-label" style="color:var(--cyan)">↓ WAN</span><span class="stat-value" style="color:var(--cyan);font-weight:800">'+fmtBps(wanDown)+'</span></div><div class="stat-row"><span class="stat-label" style="color:var(--orange)">↑ WAN</span><span class="stat-value" style="color:var(--orange);font-weight:800">'+fmtBps(wanUp)+'</span></div><div class="stat-row"><span class="stat-label" style="color:var(--cyan)">↓ WAN1</span><span class="stat-value" style="color:var(--cyan);font-weight:800">'+fmtBps(n.wan1_down_bps||0)+'</span></div><div class="stat-row"><span class="stat-label" style="color:var(--orange)">↑ WAN1</span><span class="stat-value" style="color:var(--orange);font-weight:800">'+fmtBps(n.wan1_up_bps||0)+'</span></div><div style="text-align:center;margin-top:6px"><a href="/network" style="color:var(--accent);font-size:var(--fs-xs);text-decoration:none;font-weight:600">→ Full Network Map</a></div>');
-
-    if(vms.vms&&vms.vms.length){
-      let vmHtml='';
-      vms.vms.forEach(v=>{
-        const cpuColor=v.cpu>70?'var(--red)':v.cpu>40?'var(--yellow)':'var(--green)';
-        const memColor=v.mem_pct>80?'var(--red)':v.mem_pct>50?'var(--yellow)':'var(--green)';
-        const diskColor=v.disk_pct>80?'var(--red)':v.disk_pct>50?'var(--yellow)':'var(--green)';
-        const icon=v.type==='lxc'?'📦':'🖥️';
-        const diskGb=(v.disk_total/1073741824).toFixed(1);
-        vmHtml+='<div class="vm-card"><div class="name">'+icon+' '+v.name+'</div><div class="detail">CPU: <span style="color:'+cpuColor+';font-weight:700">'+v.cpu+'%</span> · RAM: <span style="color:'+memColor+';font-weight:700">'+v.mem_pct+'%</span></div><div class="detail">Disk: <span style="color:'+diskColor+';font-weight:700">'+v.disk_pct+'%</span> · '+diskGb+'GB</div><div class="detail">Uptime: '+v.uptime+'</div></div>';
-      });
-      html+=cardWrap('card-vms','📦','Proxmox VMs ('+vms.vms.length+')','<div class="vm-grid">'+vmHtml+'</div>');
-    }
-
-    if(unifi&&unifi.online){
-      const h=unifi.health||{};const wan=h.wan||{};const wlan=h.wlan||{};
-      let uHtml='<div class="stat-row"><span class="stat-label">Name</span><span class="stat-value">'+(unifi.name||'Dream Router')+'</span></div>';
-      uHtml+='<div class="stat-row"><span class="stat-label">Version</span><span class="stat-value">'+(unifi.version||'?')+'</span></div>';
-      if(wan.wan_ip)uHtml+='<div class="stat-row"><span class="stat-label">WAN IP</span><span class="stat-value">'+wan.wan_ip+'</span></div>';
-      uHtml+='<div class="stat-row"><span class="stat-label">WLAN</span><span class="stat-value" style="color:var(--green)">'+(wlan.num_user||0)+' users · '+(wlan.num_ap||0)+' APs</span></div>';
-      uHtml+='<div class="stat-row"><span class="stat-label">Clients</span><span class="stat-value">'+(unifi.wifi_clients||0)+' WiFi · '+(unifi.wired_clients||0)+' wired</span></div>';
-      if(unifi.latency_avg)uHtml+='<div class="stat-row"><span class="stat-label">Latency</span><span class="stat-value">'+unifi.latency_avg.toFixed(0)+'ms</span></div>';
-      uHtml+='<div class="stat-row"><span class="stat-label">Alarms</span><span class="stat-value" style="color:'+(unifi.alarms>0?'var(--red)':'var(--green)')+'">'+(unifi.alarms||0)+'</span></div>';
-      html+=cardWrap('card-unifi','📡','UniFi Dream Router',uHtml);
-    }
-
-    if(unifiClients&&unifiClients.clients){
-      window._uc=unifiClients.clients;
-      window._ucSort={k:'rx_rate',d:true};
-      let cHtml='<input type="text" id="ucSearch" placeholder="Search..." style="width:100%;padding:6px 10px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:var(--fs-xs)" oninput="_renderUC()">';
-      cHtml+='<div class="table-scroll"><table class="client-table"><thead><tr><th onclick="_sortUC(\'#\')" style="cursor:pointer"> #<span id="th-#"></span></th><th onclick="_sortUC(\'name\')" style="cursor:pointer"> Client<span id="th-name"></span></th><th onclick="_sortUC(\'ip\')" style="cursor:pointer"> IP<span id="th-ip"></span></th><th onclick="_sortUC(\'is_wired\')" style="cursor:pointer"> Conn<span id="th-is_wired"></span></th><th onclick="_sortUC(\'rssi\')" style="cursor:pointer"> Signal<span id="th-rssi"></span></th><th onclick="_sortUC(\'rx_rate\')" style="cursor:pointer"> ↓<span id="th-rx_rate"></span></th><th onclick="_sortUC(\'tx_rate\')" style="cursor:pointer"> ↑<span id="th-tx_rate"></span></th><th onclick="_sortUC(\'rx_bytes\')" style="cursor:pointer"> Total<span id="th-rx_bytes"></span></th></tr></thead><tbody id="ucBody"></tbody></table></div>';
-      cHtml+='<div style="text-align:center;margin-top:8px;font-size:var(--fs-xs);color:var(--muted)" id="ucCount"></div>';
-      html+=cardWrap('card-live-clients','📶','Live Clients',cHtml,'span-full');
-      setTimeout(_renderUC,100);
-    }
-
-    if(switches&&switches.switches){
-      let sHtml='';
-      switches.switches.forEach(sw=>{const sc=sw.online?'online':'offline';const st=sw.online?'Online':'Offline';sHtml+='<div class="stat-row"><span class="stat-label"><span class="status-dot '+sc+'"></span>'+sw.name+' ('+sw.ip+')</span><span class="stat-value" style="color:var(--'+(sc==='online'?'green':'red')+')">'+st+'</span></div>';if(sw.online){sHtml+='<div class="stat-row"><span class="stat-label">Ports</span><span class="stat-value">'+sw.ports_up+' up / '+sw.ports_down+' down</span></div>';sHtml+='<div class="stat-row"><span class="stat-label">Uptime</span><span class="stat-value">'+sw.uptime_days+' days</span></div>'}});
-      sHtml+='<div style="text-align:center;margin-top:8px"><a href="/switches" style="color:var(--accent);font-size:var(--fs-xs);text-decoration:none;font-weight:600">→ Full Switch Details</a></div>';
-      html+=cardWrap('card-switches','🔌','Network Switches',sHtml);
-    }
-
-    document.getElementById('dashboard').innerHTML=html;
-
-    collapsedCards.forEach(id=>{const el=document.getElementById(id);if(el)el.classList.add('collapsed')});
-
-    if(window._donutData){
-      const ctx=document.getElementById('donutChart');
-      if(ctx){if(donutChart)donutChart.destroy();donutChart=new Chart(ctx,{type:'doughnut',data:{labels:window._donutData.labels,datasets:[{data:window._donutData.data,backgroundColor:window._donutData.colors,borderWidth:0}]},options:{responsive:true,cutout:'65%',plugins:{legend:{display:false}}}})}
-    }
-
-    setCols(currentCols);
   }catch(e){
-    document.getElementById('dashboard').innerHTML='<div class="card span-full"><h2>⚠️ Error</h2><p style="color:var(--muted)">'+e.message+'</p></div>';
+    if(e.name==='AbortError') return;
+    if(firstLoad)document.getElementById('dashboard').innerHTML='<div class="card span-full"><h2>⚠️ Error</h2><p style="color:var(--muted)">'+e.message+'</p></div>';
   }
+}
+
+function updateExecSummary(dash,power,vms,unifi){
+  const p=dash.power||{};const totalW=p.total_watts||0;
+  const dailyKwh=(totalW/1000)*24;const monthlyCost=dailyKwh*30*KWH_COST;
+  const n=dash.network||{};const px=dash.proxmox||{};
+  const wattsDevices=(power.all||[]).filter(d=>d.watts).sort((a,b)=>b.watts-a.watts);
+  const standbyDevices=wattsDevices.filter(d=>d.watts<5);
+  const top3=wattsDevices.slice(0,3);
+  const top3Pct=totalW>0?top3.reduce((s,d)=>s+d.watts,0)/totalW*100:0;
+
+  let kpis='';
+  kpis+='<div class="exec-kpi"><span class="icon">⚡</span><div class="value" style="color:var(--accent)">'+totalW.toFixed(0)+'W</div><div class="label">Power</div></div>';
+  kpis+='<div class="exec-kpi"><span class="icon">💰</span><div class="value" style="color:var(--yellow)">$'+monthlyCost.toFixed(0)+'</div><div class="label">Monthly</div></div>';
+  kpis+='<div class="exec-kpi"><span class="icon">🌐</span><div class="value" style="color:var(--green)">'+(n.total_clients||0)+'</div><div class="label">Devices</div></div>';
+  kpis+='<div class="exec-kpi"><span class="icon">📦</span><div class="value" style="color:var(--cyan)">'+(px.vms_running||0)+'</div><div class="label">VMs</div></div>';
+  kpis+='<div class="exec-kpi"><span class="icon">🖥️</span><div class="value" style="color:'+(px.cpu_pct>70?'var(--red)':'var(--green)')+'">'+(px.cpu_pct||0)+'%</div><div class="label">CPU</div></div>';
+  kpis+='<div class="exec-kpi"><span class="icon">🔌</span><div class="value" style="color:var(--purple)">'+(px.ram_pct||0)+'%</div><div class="label">RAM</div></div>';
+  document.getElementById('execKpis').innerHTML=kpis;
+
+  let alerts='';
+  if(totalW>1000)alerts+='<div class="exec-alert critical">⚡ High: '+totalW.toFixed(0)+'W</div>';
+  else if(totalW>500)alerts+='<div class="exec-alert warn">⚡ Moderate: '+totalW.toFixed(0)+'W</div>';
+  else alerts+='<div class="exec-alert ok">⚡ Normal: '+totalW.toFixed(0)+'W</div>';
+  if(top3.length)alerts+='<div class="exec-alert info">🔥 '+top3Pct.toFixed(0)+'% from '+top3.length+' devices</div>';
+  if(standbyDevices.length>3)alerts+='<div class="exec-alert warn">👻 '+standbyDevices.length+' standby</div>';
+  const netDown=n.wan_down_bps||0;
+  alerts+='<div class="exec-alert '+(netDown>1000000?'warn':'ok')+'">📶 '+(netDown>1000000?(netDown/1000000).toFixed(1)+' Mbps':(netDown/1000).toFixed(0)+' Kbps')+'</div>';
+  alerts+='<div class="exec-alert ok">📦 '+(px.vms_running||0)+'/'+(px.vms_total||0)+' VMs</div>';
+  if(unifi&&unifi.online){const uc=unifi.total_clients||0;alerts+='<div class="exec-alert ok">📡 '+uc+' UniFi clients</div>'}
+  document.getElementById('execAlerts').innerHTML=alerts;
 }
 
 function _sortUC(k){
   if(window._ucSort.k===k)window._ucSort.d=!window._ucSort.d;
   else{window._ucSort.k=k;window._ucSort.d=k==='#'||k==='name'||k==='ip'?false:true}
+  ucSortState=window._ucSort;
+  localStorage.setItem('ho_uc_sort',JSON.stringify(ucSortState));
   _renderUC();
 }
 
@@ -302,7 +440,7 @@ function _renderUC(){
 
 setCols(currentCols);
 load();
-setInterval(load,5000);
+setInterval(load,10000);
 </script>
 </body>
 </html>

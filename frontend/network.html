@@ -32,7 +32,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .section{background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;padding:clamp(10px,2vw,16px)}
 .section h2{font-size:clamp(0.9rem,2.5vw,1.1rem);font-weight:700;margin-bottom:12px}
 .client-table{width:100%;border-collapse:collapse;font-size:clamp(0.65rem,1.6vw,0.8rem)}
-.client-table th{text-align:left;color:var(--muted);font-weight:600;padding:7px 4px;border-bottom:1px solid var(--border);font-size:0.55rem;white-space:nowrap;text-transform:uppercase}
+.client-table th{text-align:left;color:var(--muted);font-weight:600;padding:7px 4px;border-bottom:1px solid var(--border);font-size:0.55rem;white-space:nowrap;text-transform:uppercase;cursor:pointer;user-select:none}
+.client-table th:hover{color:var(--accent)}
+.client-table th .sort-arrow{margin-left:2px;font-size:0.5rem}
 .client-table td{padding:7px 4px;border-bottom:1px solid var(--border);vertical-align:middle}
 .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .badge{display:inline-block;padding:2px 5px;border-radius:4px;font-size:0.52rem;font-weight:700}
@@ -53,46 +55,153 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 <div class="refresh-bar"><span id="lastUpdate">Loading...</span><button onclick="load()">↻ Refresh</button></div>
 <div class="container" id="netContainer"><div class="loading">Loading network data...</div></div>
 <script>
+let firstLoad = true;
+let refreshController = null;
+const FETCH_TIMEOUT = 4000;
+let devSort = {k:'name',d:false};
+let clientSort = {k:'rx_rate',d:true};
+
+function fetchWithTimeout(url, timeout = FETCH_TIMEOUT) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  return fetch(url, { signal: controller.signal }).then(r => { clearTimeout(id); return r.json(); }).catch(e => { clearTimeout(id); if (e.name === 'AbortError') return {}; throw e; });
+}
+
+function sortTable(arr, key, desc) {
+  return arr.slice().sort((a,b) => {
+    let va = a[key] || 0, vb = b[key] || 0;
+    if (key === 'name' || key === 'type' || key === 'ip' || key === 'status') {
+      return desc ? String(vb).localeCompare(String(va)) : String(va).localeCompare(String(vb));
+    }
+    return desc ? vb - va : va - vb;
+  });
+}
+
 async function load(){
+  if(refreshController) refreshController.abort();
+  refreshController = new AbortController();
   try{
     const[health,devices,clients]=await Promise.all([
-      fetch('/api/network/health').then(r=>r.json()),
-      fetch('/api/network/devices').then(r=>r.json()),
-      fetch('/api/network/clients').then(r=>r.json())
+      fetchWithTimeout('/api/network/health'),
+      fetchWithTimeout('/api/network/devices'),
+      fetchWithTimeout('/api/network/clients')
     ]);
     document.getElementById('lastUpdate').textContent=new Date().toLocaleTimeString();
-    let html='';
-    if(health.health){
-      html+='<div class="section"><h2>🔍 Network Health</h2>';
-      health.health.forEach(h=>{
-        html+='<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>'+h.subsystem+'</span><span style="color:'+(h.status==='ok'?'var(--green)':'var(--red)')+'">'+h.status+'</span></div>';
-      });
-      html+='</div>';
+
+    if(firstLoad){
+      let html='';
+      if(health.health){
+        html+='<div class="section" id="sec-health"><h2>🔍 Network Health</h2><div id="health-rows">';
+        health.health.forEach(h=>{
+          html+='<div class="health-row" data-sub="'+h.subsystem+'" style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>'+h.subsystem+'</span><span class="health-status" style="color:'+(h.status==='ok'?'var(--green)':'var(--red)')+'">'+h.status+'</span></div>';
+        });
+        html+='</div></div>';
+      }
+      if(devices.devices){
+        html+='<div class="section" id="sec-devices"><h2>📡 Devices</h2><div class="table-scroll"><table class="client-table"><thead><tr>';
+        html+='<th onclick="sortDevices(\'name\')">Name<span class="sort-arrow" id="th-dev-name"></span></th>';
+        html+='<th onclick="sortDevices(\'type\')">Type<span class="sort-arrow" id="th-dev-type"></span></th>';
+        html+='<th onclick="sortDevices(\'ip\')">IP<span class="sort-arrow" id="th-dev-ip"></span></th>';
+        html+='<th onclick="sortDevices(\'clients\')">Clients<span class="sort-arrow" id="th-dev-clients"></span></th>';
+        html+='<th onclick="sortDevices(\'cpu_pct\')">CPU<span class="sort-arrow" id="th-dev-cpu_pct"></span></th>';
+        html+='<th onclick="sortDevices(\'status\')">Status<span class="sort-arrow" id="th-dev-status"></span></th>';
+        html+='</tr></thead><tbody id="devices-body"></tbody></table></div></div>';
+      }
+      if(clients.clients){
+        html+='<div class="section" id="sec-clients"><h2>📶 Clients (<span id="client-count">'+clients.total+'</span>)</h2>';
+        html+='<input type="text" id="clientSearch" placeholder="Search..." style="width:100%;padding:6px 10px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:clamp(0.65rem,1.6vw,0.8rem)" oninput="renderClients()">';
+        html+='<div class="table-scroll"><table class="client-table"><thead><tr>';
+        html+='<th onclick="sortClients(\'name\')">Client<span class="sort-arrow" id="th-cli-name"></span></th>';
+        html+='<th onclick="sortClients(\'ip\')">IP<span class="sort-arrow" id="th-cli-ip"></span></th>';
+        html+='<th>MAC</th>';
+        html+='<th onclick="sortClients(\'wired\')">Conn<span class="sort-arrow" id="th-cli-wired"></span></th>';
+        html+='<th onclick="sortClients(\'signal\')">Signal<span class="sort-arrow" id="th-cli-signal"></span></th>';
+        html+='<th onclick="sortClients(\'rx_rate\')">↓ Rate<span class="sort-arrow" id="th-cli-rx_rate"></span></th>';
+        html+='<th onclick="sortClients(\'tx_rate\')">↑ Rate<span class="sort-arrow" id="th-cli-tx_rate"></span></th>';
+        html+='<th onclick="sortClients(\'rx_bytes\')">Total<span class="sort-arrow" id="th-cli-rx_bytes"></span></th>';
+        html+='</tr></thead><tbody id="clients-body"></tbody></table></div></div>';
+      }
+      document.getElementById('netContainer').innerHTML=html;
+      window._netDevices = devices.devices || [];
+      window._netClients = clients.clients || [];
+      renderDevices();
+      renderClients();
+      firstLoad=false;
+    } else {
+      // Smooth update
+      window._netDevices = devices.devices || [];
+      window._netClients = clients.clients || [];
+      renderDevices();
+      renderClients();
+      document.getElementById('client-count').textContent = clients.total || 0;
+      if(health.health){
+        health.health.forEach(h=>{
+          const row=document.querySelector('.health-row[data-sub="'+h.subsystem+'"]');
+          if(row){
+            const st=row.querySelector('.health-status');
+            if(st){st.textContent=h.status;st.style.color=h.status==='ok'?'var(--green)':'var(--red)'}
+          }
+        });
+      }
     }
-    if(devices.devices){
-      html+='<div class="section"><h2>📡 Devices</h2><div class="table-scroll"><table class="client-table"><thead><tr><th>Name</th><th>Type</th><th>IP</th><th>Clients</th><th>CPU</th><th>Status</th></tr></thead><tbody>';
-      devices.devices.forEach(d=>{
-        html+='<tr><td style="font-weight:600">'+d.name+'</td><td>'+d.type+'</td><td>'+d.ip+'</td><td>'+d.clients+'</td><td>'+d.cpu_pct+'%</td><td style="color:'+(d.status==='online'?'var(--green)':'var(--red)')+'">'+d.status+'</td></tr>';
-      });
-      html+='</tbody></table></div></div>';
-    }
-    if(clients.clients){
-      html+='<div class="section"><h2>📶 Clients ('+clients.total+')</h2><div class="table-scroll"><table class="client-table"><thead><tr><th>Client</th><th>IP</th><th>MAC</th><th>Connection</th><th>Signal</th><th>↓ Rate</th><th>↑ Rate</th><th>Total</th></tr></thead><tbody>';
-      clients.clients.forEach(c=>{
-        const cn=c.wired?'<span class="badge wired">Wired</span>':'<span class="badge wifi">'+(c.essid||'WiFi')+'</span>';
-        const sg=c.wired?'-':(c.signal||0)+' dBm';
-        const sc=c.wired?'':(c.signal>-60?'var(--green)':c.signal>-75?'var(--yellow)':'var(--red)');
-        html+='<tr><td style="font-weight:600">'+c.name+'</td><td>'+(c.ip||'-')+'</td><td style="font-size:0.65rem;color:var(--muted)">'+c.mac+'</td><td>'+cn+'</td><td style="color:'+sc+'">'+sg+'</td><td style="font-weight:700">'+c.rx_rate+' KB/s</td><td style="font-weight:700">'+c.tx_rate+' KB/s</td><td style="color:var(--muted)">'+c.rx_bytes+' / '+c.tx_bytes+'</td></tr>';
-      });
-      html+='</tbody></table></div></div>';
-    }
-    document.getElementById('netContainer').innerHTML=html;
   }catch(e){
-    document.getElementById('netContainer').innerHTML='<div class="loading" style="color:var(--red)">Error: '+e.message+'</div>';
+    if(e.name==='AbortError') return;
+    if(firstLoad)document.getElementById('netContainer').innerHTML='<div class="loading" style="color:var(--red)">Error: '+e.message+'</div>';
   }
 }
+
+function sortDevices(k){
+  if(devSort.k===k) devSort.d=!devSort.d;
+  else{devSort.k=k;devSort.d=false}
+  renderDevices();
+}
+
+function renderDevices(){
+  if(!window._netDevices) return;
+  const sorted = sortTable(window._netDevices, devSort.k, devSort.d);
+  const body = document.getElementById('devices-body');
+  if(!body) return;
+  let rows='';
+  sorted.forEach(d=>{
+    rows+='<tr data-name="'+d.name+'"><td style="font-weight:600">'+d.name+'</td><td>'+d.type+'</td><td>'+d.ip+'</td><td class="dev-clients">'+d.clients+'</td><td class="dev-cpu">'+d.cpu_pct+'%</td><td style="color:'+(d.status==='online'?'var(--green)':'var(--red)')+'">'+d.status+'</td></tr>';
+  });
+  body.innerHTML=rows;
+  document.querySelectorAll('[id^="th-dev-"]').forEach(el=>el.textContent='');
+  const th=document.getElementById('th-dev-'+devSort.k);
+  if(th)th.textContent=devSort.d?' ▲':' ▼';
+}
+
+function sortClients(k){
+  if(clientSort.k===k) clientSort.d=!clientSort.d;
+  else{clientSort.k=k;clientSort.d=k==='name'?false:true}
+  renderClients();
+}
+
+function renderClients(){
+  if(!window._netClients) return;
+  const q=(document.getElementById('clientSearch')?document.getElementById('clientSearch').value:'').toLowerCase();
+  let filtered = window._netClients.filter(c=>{
+    if(!q) return true;
+    return (c.name||'').toLowerCase().includes(q) || (c.ip||'').includes(q) || (c.mac||'').toLowerCase().includes(q);
+  });
+  const sorted = sortTable(filtered, clientSort.k, clientSort.d);
+  const body = document.getElementById('clients-body');
+  if(!body) return;
+  let rows='';
+  sorted.forEach(c=>{
+    const cn=c.wired?'<span class="badge wired">Wired</span>':'<span class="badge wifi">'+(c.essid||'WiFi')+'</span>';
+    const sg=c.wired?'-':(c.signal||0)+' dBm';
+    const sc=c.wired?'':(c.signal>-60?'var(--green)':c.signal>-75?'var(--yellow)':'var(--red)');
+    rows+='<tr data-mac="'+c.mac+'"><td style="font-weight:600">'+c.name+'</td><td class="c-ip">'+(c.ip||'-')+'</td><td style="font-size:0.65rem;color:var(--muted)">'+c.mac+'</td><td>'+cn+'</td><td style="color:'+sc+'" class="c-signal">'+sg+'</td><td style="font-weight:700" class="c-rx">'+c.rx_rate+' KB/s</td><td style="font-weight:700" class="c-tx">'+c.tx_rate+' KB/s</td><td style="color:var(--muted)" class="c-total">'+c.rx_bytes+' / '+c.tx_bytes+'</td></tr>';
+  });
+  body.innerHTML=rows;
+  document.querySelectorAll('[id^="th-cli-"]').forEach(el=>el.textContent='');
+  const th=document.getElementById('th-cli-'+clientSort.k);
+  if(th)th.textContent=clientSort.d?' ▲':' ▼';
+}
+
 load();
-setInterval(load,5000);
+setInterval(load,10000);
 </script>
 </body>
 </html>
