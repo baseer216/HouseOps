@@ -20,16 +20,16 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 <style>
-:root{--bg:#0a0e17;--card:#111827;--border:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--cyan:#06b6d4;--purple:#a855f7}
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;min-height:100dvh;padding-bottom:env(safe-area-inset-bottom,20px);touch-action:manipulation}
+:root{--bg:#0a0e17;--card:#111827;--border:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--cyan:#06b6d4;--purple:#a855f7;--cols:2;--fs-xs:clamp(0.58rem,1.4vw,0.68rem);--fs-sm:clamp(0.68rem,1.7vw,0.78rem);--fs-md:clamp(0.78rem,1.9vw,0.88rem);--fs-lg:clamp(0.95rem,2.4vw,1.1rem);--pad:clamp(10px,2.5vw,16px);--gap:clamp(8px,2vw,12px);--radius:10px}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;min-height:100dvh;padding-bottom:env(safe-area-inset-bottom,20px);touch-action:manipulation;overflow-x:hidden}
 .header{background:linear-gradient(135deg,#1e3a5f,#0a0e17);padding:max(env(safe-area-inset-top,10px),10px) clamp(12px,3vw,20px) 8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
 .header a{text-decoration:none;color:inherit}
 .header h1{font-size:clamp(1rem,3vw,1.3rem);font-weight:800}
 .header h1 span{color:var(--accent)}
 .header .back{color:var(--accent);text-decoration:none;font-size:clamp(0.8rem,2vw,1rem)}
 .container{padding:clamp(10px,2vw,16px)}
-.section{background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;padding:clamp(10px,2vw,16px)}
+.section{background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;padding:clamp(10px,2vw,16px);position:relative;transition:grid-column 0.2s,grid-row 0.2s;resize:both;overflow:auto}
 .section h2{font-size:clamp(0.9rem,2.5vw,1.1rem);font-weight:700;margin-bottom:12px}
 .client-table{width:100%;border-collapse:collapse;font-size:clamp(0.65rem,1.6vw,0.8rem)}
 .client-table th{text-align:left;color:var(--muted);font-weight:600;padding:7px 4px;border-bottom:1px solid var(--border);font-size:0.55rem;white-space:nowrap;text-transform:uppercase;cursor:pointer;user-select:none}
@@ -48,6 +48,11 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .net-insight{background:var(--border);border-radius:6px;padding:8px 4px;text-align:center}
 .net-insight .val{font-size:var(--fs-md);font-weight:800;line-height:1.1}
 .net-insight .lbl{font-size:0.52rem;color:var(--muted);margin-top:2px}
+.net-row-btn.active{background:var(--accent)!important;color:#fff!important;border-color:var(--accent)!important}
+.section .resize-handle{position:absolute;bottom:0;right:0;width:18px;height:18px;cursor:nwse-resize;z-index:10;opacity:0.4;transition:opacity 0.2s}
+.section .resize-handle:hover{opacity:0.8}
+.section .resize-handle::after{content:'';position:absolute;bottom:4px;right:4px;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);border-radius:0 0 2px 0}
+@media(max-width:480px){.section .resize-handle{display:none}}
 </style>
 </head>
 <body>
@@ -60,6 +65,42 @@ let refreshController = null;
 const FETCH_TIMEOUT = 4000;
 let devSort = {k:'name',d:false};
 let clientSort = {k:'rx_rate',d:true};
+let clientRowLimit = parseInt(localStorage.getItem('net_client_limit') || '25');
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+});
+async function installPWA() {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice;
+  deferredPrompt = null;
+}
+
+function startResize(e, id) {
+  e.preventDefault();
+  const section = document.getElementById(id);
+  if (!section) return;
+  const startX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX;
+  const startY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+  const startH = section.offsetHeight;
+  function onMove(ev) {
+    const cy = ev.type === 'touchmove' ? ev.touches[0].clientY : ev.clientY;
+    const dy = cy - startY;
+    section.style.minHeight = Math.max(150, startH + dy) + 'px';
+  }
+  function onEnd() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onEnd);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onEnd);
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend', onEnd);
+}
 
 function fetchWithTimeout(url, timeout = FETCH_TIMEOUT) {
   const controller = new AbortController();
@@ -95,7 +136,7 @@ async function load(){
         health.health.forEach(h=>{
           html+='<div class="health-row" data-sub="'+h.subsystem+'" style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>'+h.subsystem+'</span><span class="health-status" style="color:'+(h.status==='ok'?'var(--green)':'var(--red)')+'">'+h.status+'</span></div>';
         });
-        html+='</div></div>';
+        html+='</div><div class="resize-handle" onmousedown="startResize(event,\'sec-health\')" ontouchstart="startResize(event,\'sec-health\')"></div></div>';
       }
       if(devices.devices){
         html+='<div class="section" id="sec-devices"><h2>📡 Devices</h2><div class="table-scroll"><table class="client-table"><thead><tr>';
@@ -105,11 +146,15 @@ async function load(){
         html+='<th onclick="sortDevices(\'clients\')">Clients<span class="sort-arrow" id="th-dev-clients"></span></th>';
         html+='<th onclick="sortDevices(\'cpu_pct\')">CPU<span class="sort-arrow" id="th-dev-cpu_pct"></span></th>';
         html+='<th onclick="sortDevices(\'status\')">Status<span class="sort-arrow" id="th-dev-status"></span></th>';
-        html+='</tr></thead><tbody id="devices-body"></tbody></table></div></div>';
+        html+='</tr></thead><tbody id="devices-body"></tbody></table></div><div class="resize-handle" onmousedown="startResize(event,\'sec-devices\')" ontouchstart="startResize(event,\'sec-devices\')"></div></div>';
       }
       if(clients.clients){
         html+='<div class="section" id="sec-clients"><h2>📶 Clients (<span id="client-count">'+clients.total+'</span>)</h2>';
-        html+='<input type="text" id="clientSearch" placeholder="Search..." style="width:100%;padding:6px 10px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:clamp(0.65rem,1.6vw,0.8rem)" oninput="renderClients()">';
+        html+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">';
+        html+='<input type="text" id="clientSearch" placeholder="Search..." style="flex:1;min-width:120px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:clamp(0.65rem,1.6vw,0.8rem)" oninput="renderClients()">';
+        html+='<div style="display:flex;align-items:center;gap:3px;font-size:var(--fs-xs);color:var(--muted)">Rows:';
+        [5,10,25,50,999].forEach(n=>{const lbl=n===999?'All':n;const act=n===clientRowLimit?'active':'';html+='<button class="net-row-btn '+act+'" onclick="setClientLimit('+n+')" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:'+(act?'var(--accent)':'transparent')+';color:'+(act?'#fff':'var(--muted)')+';cursor:pointer;font-size:0.65rem;min-height:28px">'+lbl+'</button>'});
+        html+='</div></div>';
         html+='<div class="table-scroll"><table class="client-table"><thead><tr>';
         html+='<th onclick="sortClients(\'name\')">Client<span class="sort-arrow" id="th-cli-name"></span></th>';
         html+='<th onclick="sortClients(\'ip\')">IP<span class="sort-arrow" id="th-cli-ip"></span></th>';
@@ -119,7 +164,9 @@ async function load(){
         html+='<th onclick="sortClients(\'rx_rate\')">↓ Rate<span class="sort-arrow" id="th-cli-rx_rate"></span></th>';
         html+='<th onclick="sortClients(\'tx_rate\')">↑ Rate<span class="sort-arrow" id="th-cli-tx_rate"></span></th>';
         html+='<th onclick="sortClients(\'rx_bytes\')">Total<span class="sort-arrow" id="th-cli-rx_bytes"></span></th>';
-        html+='</tr></thead><tbody id="clients-body"></tbody></table></div></div>';
+        html+='</tr></thead><tbody id="clients-body"></tbody></table></div>';
+        html+='<div style="text-align:center;margin-top:8px;font-size:0.7rem;color:var(--muted)" id="cliCount"></div>';
+        html+='<div class="resize-handle" onmousedown="startResize(event,\'sec-clients\')" ontouchstart="startResize(event,\'sec-clients\')"></div></div>';
       }
       document.getElementById('netContainer').innerHTML=html;
       window._netDevices = devices.devices || [];
@@ -177,6 +224,12 @@ function sortClients(k){
   renderClients();
 }
 
+function setClientLimit(n){
+  clientRowLimit=n;
+  localStorage.setItem('net_client_limit',n);
+  renderClients();
+}
+
 function renderClients(){
   if(!window._netClients) return;
   const q=(document.getElementById('clientSearch')?document.getElementById('clientSearch').value:'').toLowerCase();
@@ -187,8 +240,11 @@ function renderClients(){
   const sorted = sortTable(filtered, clientSort.k, clientSort.d);
   const body = document.getElementById('clients-body');
   if(!body) return;
+  const show=sorted.slice(0,clientRowLimit);
+  const countEl=document.getElementById('cliCount');
+  if(countEl)countEl.textContent='Showing '+show.length+' of '+sorted.length+' total · '+window._netClients.filter(x=>!x.wired).length+' WiFi, '+window._netClients.filter(x=>x.wired).length+' wired';
   let rows='';
-  sorted.forEach(c=>{
+  show.forEach(c=>{
     const cn=c.wired?'<span class="badge wired">Wired</span>':'<span class="badge wifi">'+(c.essid||'WiFi')+'</span>';
     const sg=c.wired?'-':(c.signal||0)+' dBm';
     const sc=c.wired?'':(c.signal>-60?'var(--green)':c.signal>-75?'var(--yellow)':'var(--red)');

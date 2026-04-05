@@ -24,6 +24,20 @@ if ('serviceWorker' in navigator) {
 :root { --bg:#0a0e17;--card:#111827;--border:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--cyan:#06b6d4;--purple:#a855f7;--cols:3;--fs-xs:clamp(0.58rem,1.4vw,0.68rem);--fs-sm:clamp(0.68rem,1.7vw,0.78rem);--fs-md:clamp(0.78rem,1.9vw,0.88rem);--fs-lg:clamp(0.95rem,2.4vw,1.1rem);--fs-xl:clamp(1.3rem,3.5vw,1.8rem);--fs-2xl:clamp(1.6rem,4.5vw,2.2rem);--pad:clamp(10px,2.5vw,16px);--gap:clamp(8px,2vw,12px);--radius:10px }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;min-height:100dvh;padding-bottom:env(safe-area-inset-bottom,20px);touch-action:manipulation;overflow-x:hidden}
+.grid{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:var(--gap);padding:var(--gap) clamp(12px,3vw,20px)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);position:relative;overflow:hidden;transition:grid-column 0.2s,grid-row 0.2s;resize:both}
+.card.span-full{grid-column:1/-1}
+.card.span-2{grid-column:span 2}
+.card.span-3{grid-column:span 3}
+.card.resizeable{overflow:auto}
+.card .resize-handle{position:absolute;bottom:0;right:0;width:18px;height:18px;cursor:nwse-resize;z-index:10;opacity:0.4;transition:opacity 0.2s}
+.card .resize-handle:hover{opacity:0.8}
+.card .resize-handle::after{content:'';position:absolute;bottom:4px;right:4px;width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);border-radius:0 0 2px 0}
+.card.reorder-mode{cursor:grab;animation:pulse 2s infinite}
+.card.reorder-mode:active{cursor:grabbing}
+.card.dragging{opacity:0.4;transform:scale(0.95)}
+.card.drag-over{border-color:var(--accent);box-shadow:0 0 12px rgba(59,130,246,0.3)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(59,130,246,0)}50%{box-shadow:0 0 8px rgba(59,130,246,0.3)}}
 .header{background:linear-gradient(135deg,#1e3a5f,#0a0e17);padding:max(env(safe-area-inset-top,10px),10px) clamp(12px,3vw,20px) 8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
 .header a{text-decoration:none;color:inherit}
 .header h1{font-size:clamp(1rem,3vw,1.3rem);font-weight:800}
@@ -45,9 +59,6 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .exec-alert.warn{background:rgba(234,179,8,0.1);color:var(--yellow);border:1px solid rgba(234,179,8,0.15)}
 .exec-alert.critical{background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.15)}
 .exec-alert.info{background:rgba(59,130,246,0.1);color:var(--accent);border:1px solid rgba(59,130,246,0.15)}
-.grid{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:var(--gap);padding:var(--gap) clamp(12px,3vw,20px)}
-.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:var(--pad);position:relative;overflow:hidden}
-.card.span-full{grid-column:1/-1}
 .card h2{font-size:var(--fs-xs);font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;user-select:none}
 .card h2 .icon{font-size:clamp(0.85rem,2.3vw,1.05rem)}
 .big-stat{text-align:center;padding:6px 0}
@@ -110,7 +121,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .heatmap-scale{display:flex;justify-content:space-between;font-size:0.5rem;color:var(--muted);margin-top:2px}
 @media(max-width:480px){
   :root{--cols:1;--fs-xs:0.65rem;--fs-sm:0.72rem;--fs-md:0.8rem;--fs-lg:1rem;--fs-xl:1.2rem;--fs-2xl:1.5rem;--pad:10px;--gap:8px}
-  .card.span-full{grid-column:span 1}
+  .card.span-full,.card.span-2,.card.span-3{grid-column:span 1}
   .exec-kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
   .exec-kpi{min-height:44px;padding:5px 3px}
   .exec-kpi .value{font-size:0.85rem}
@@ -134,21 +145,30 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
   .bar-label{width:100%;margin-bottom:2px}
   .bar-value{width:auto}
   .heatmap-label{width:45px;font-size:0.55rem}
+  .card .resize-handle{display:none}
 }
 @media(min-width:481px) and (max-width:768px){:root{--cols:2}}
 @media(min-width:769px) and (max-width:1024px){:root{--cols:2}}
+@media(min-width:1025px) and (max-width:1440px){:root{--cols:3}}
+@media(min-width:1441px) and (max-width:1920px){:root{--cols:4}}
+@media(min-width:1921px){:root{--cols:5}}
 </style>
 </head>
 <body>
 <div class="header"><a href="/"><h1><span>House</span>OPS</h1></a><div class="meta"><div class="status"><div class="status-dot online"></div>Live</div><div class="refresh" id="lastUpdate">Loading...</div></div></div>
 <div class="toolbar">
   <button class="btn" onclick="resetLayout()">↺ Reset</button>
+  <button class="btn" id="reorderBtn" onclick="toggleReorder()">⤡ Reorder</button>
   <button class="btn" onclick="window.location.href='/network'">🌐 Network</button>
   <button class="btn" onclick="window.location.href='/switches'">🔌 Switches</button>
+  <button class="btn" id="installBtn" onclick="installPWA()" style="display:none">📲 Install</button>
   <div style="margin-left:auto;display:flex;gap:2px">
     <button class="btn" onclick="setCols(1)">1</button>
     <button class="btn" onclick="setCols(2)">2</button>
     <button class="btn" onclick="setCols(3)">3</button>
+    <button class="btn" onclick="setCols(4)">4</button>
+    <button class="btn" onclick="setCols(5)">5</button>
+    <button class="btn" onclick="setCols(6)">6</button>
   </div>
 </div>
 <div class="exec-summary" id="execSummary"><h2>Executive Summary</h2><div class="exec-kpi-row" id="execKpis"></div><div class="exec-alerts" id="execAlerts"></div></div>
@@ -162,6 +182,9 @@ let donutChart = null;
 let collapsedCards = JSON.parse(localStorage.getItem('ho_collapsed') || '[]');
 let currentCols = parseInt(localStorage.getItem('ho_cols') || '3');
 let ucSortState = JSON.parse(localStorage.getItem('ho_uc_sort') || '{"k":"rx_rate","d":true}');
+let ucRowLimit = parseInt(localStorage.getItem('ho_uc_limit') || '25');
+let cardOrder = JSON.parse(localStorage.getItem('ho_card_order') || '[]');
+let reorderMode = false;
 let firstLoad = true;
 let refreshController = null;
 const FETCH_TIMEOUT = 4000;
@@ -175,14 +198,84 @@ function fetchWithTimeout(url, timeout = FETCH_TIMEOUT) {
 function fmtBytes(b){if(!b)return'0 B';if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'}
 function categorizeDevice(name,entity){const n=(name+' '+entity).toLowerCase();if(n.includes('ups'))return{room:'Office',category:'UPS/Backup',icon:'🔋'};if(n.includes('tv'))return{room:'Living Room',category:'Entertainment',icon:'📺'};if(n.includes('light')||n.includes('lamp'))return{room:'Lighting',category:'Lights',icon:'💡'};if(n.includes('camera')||n.includes('cam')||n.includes('tapo'))return{room:'Security',category:'Cameras',icon:'📷'};if(n.includes('switch')||n.includes('router')||n.includes('ap '))return{room:'Network',category:'Network',icon:'📡'};if(n.includes('fridge')||n.includes('freezer'))return{room:'Kitchen',category:'Appliances',icon:'🧊'};if(n.includes('server')||n.includes('nas')||n.includes('proxmox'))return{room:'Server',category:'Computing',icon:'🖥️'};return{room:'Other',category:'Other',icon:'📦'}}
 function powerLevel(w){if(w>200)return{label:'High',cls:'high'};if(w>50)return{label:'Medium',cls:'med'};if(w>5)return{label:'Low',cls:'low'};return{label:'Standby',cls:'standby'}}
-function setCols(n){currentCols=n;document.documentElement.style.setProperty('--cols',n);localStorage.setItem('ho_cols',n);document.querySelectorAll('.toolbar .btn').forEach(b=>{if(['1','2','3'].includes(b.textContent))b.classList.toggle('active',b.textContent==n)})}
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  const btn = document.getElementById('installBtn');
+  if (btn) btn.style.display = '';
+});
+window.addEventListener('appinstalled', () => {
+  const btn = document.getElementById('installBtn');
+  if (btn) btn.style.display = 'none';
+  deferredPrompt = null;
+});
+async function installPWA() {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  if (outcome === 'accepted') {
+    const btn = document.getElementById('installBtn');
+    if (btn) btn.style.display = 'none';
+  }
+  deferredPrompt = null;
+}
+
+function setCols(n){currentCols=n;document.documentElement.style.setProperty('--cols',n);localStorage.setItem('ho_cols',n);document.querySelectorAll('.toolbar .btn').forEach(b=>{if(['1','2','3','4','5','6'].includes(b.textContent.trim()))b.classList.toggle('active',b.textContent.trim()==n)})}
 function toggleCard(id){const c=document.getElementById(id);if(!c)return;c.classList.toggle('collapsed');const i=collapsedCards.indexOf(id);if(i>-1)collapsedCards.splice(i,1);else collapsedCards.push(id);localStorage.setItem('ho_collapsed',JSON.stringify(collapsedCards))}
 function expandAll(){document.querySelectorAll('.card').forEach(c=>c.classList.remove('collapsed'));collapsedCards=[];localStorage.setItem('ho_collapsed','[]')}
 function collapseAll(){document.querySelectorAll('.card').forEach(c=>c.classList.add('collapsed'));collapsedCards=Array.from(document.querySelectorAll('.card')).map(c=>c.id);localStorage.setItem('ho_collapsed',JSON.stringify(collapsedCards))}
-function resetLayout(){collapsedCards=[];localStorage.removeItem('ho_collapsed');setCols(3);load()}
-function cardWrap(id,icon,title,body,span){const cls=collapsedCards.includes(id)?'card collapsed':'card';const sp=span?' '+span:'';return '<div id="'+id+'" class="'+cls+sp+'"><h2 onclick="toggleCard(\''+id+'\')"><span class="icon">'+icon+'</span>'+title+'</h2><div class="card-body">'+body+'</div></div>'}
-function latencyColor(ms){if(!ms&&ms!==0)return'var(--border)';if(ms<20)return'var(--green)';if(ms<50)return'var(--cyan)';if(ms<100)return'var(--yellow)';if(ms<200)return'var(--orange)';return'var(--red)'}
+function resetLayout(){collapsedCards=[];localStorage.removeItem('ho_collapsed');cardOrder=[];localStorage.removeItem('ho_card_order');setCols(3);load()}
+function toggleReorder(){reorderMode=!reorderMode;document.getElementById('reorderBtn').classList.toggle('active',reorderMode);document.querySelectorAll('.card').forEach(c=>{c.classList.toggle('reorder-mode',reorderMode);if(reorderMode){c.setAttribute('draggable','true');c.addEventListener('dragstart',onDragStart);c.addEventListener('dragover',onDragOver);c.addEventListener('dragleave',onDragLeave);c.addEventListener('drop',onDrop)}else{c.removeAttribute('draggable');c.classList.remove('dragging','drag-over');c.removeEventListener('dragstart',onDragStart);c.removeEventListener('dragover',onDragOver);c.removeEventListener('dragleave',onDragLeave);c.removeEventListener('drop',onDrop)}})}
+let dragSrcEl=null;
+function onDragStart(e){dragSrcEl=this;this.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',this.id)}
+function onDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';this.classList.add('drag-over')}
+function onDragLeave(e){this.classList.remove('drag-over')}
+function onDrop(e){e.preventDefault();e.stopPropagation();this.classList.remove('drag-over');if(dragSrcEl!==this){const grid=document.getElementById('dashboard');const cards=[...grid.querySelectorAll('.card')];const fromIdx=cards.indexOf(dragSrcEl);const toIdx=cards.indexOf(this);if(fromIdx<toIdx){this.after(dragSrcEl)}else{this.before(dragSrcEl)}saveCardOrder()}if(dragSrcEl)dragSrcEl.classList.remove('dragging');dragSrcEl=null}
+function saveCardOrder(){const cards=[...document.getElementById('dashboard').querySelectorAll('.card')];cardOrder=cards.map(c=>c.id);localStorage.setItem('ho_card_order',JSON.stringify(cardOrder))}
+function applyCardOrder(){if(!cardOrder.length)return;const grid=document.getElementById('dashboard');cardOrder.forEach(id=>{const el=document.getElementById(id);if(el)grid.appendChild(el)})}
+function cardWrap(id,icon,title,body,span){const cls=collapsedCards.includes(id)?'card collapsed':'card';const sp=span?' '+span:'';const resizeHandle='<div class="resize-handle" onmousedown="startResize(event,\''+id+'\')" ontouchstart="startResize(event,\''+id+'\')"></div>';return '<div id="'+id+'" class="'+cls+sp+'"><h2 onclick="toggleCard(\''+id+'\')"><span class="icon">'+icon+'</span>'+title+'</h2><div class="card-body">'+body+'</div>'+resizeHandle+'</div>'}
 function fmtBps(bps){if(!bps||bps<=0)return'0 bps';if(bps<1000)return bps.toFixed(0)+' bps';if(bps<1000000)return(bps/1000).toFixed(1)+' Kbps';if(bps<1000000000)return(bps/1000000).toFixed(2)+' Mbps';return(bps/1000000000).toFixed(2)+' Gbps'}
+
+function startResize(e, id) {
+  e.preventDefault();
+  const card = document.getElementById(id);
+  if (!card) return;
+  const startX = e.type === 'touchstart' ? e.touches[0].clientX : e.clientX;
+  const startY = e.type === 'touchstart' ? e.touches[0].clientY : e.clientY;
+  const startW = card.offsetWidth;
+  const startH = card.offsetHeight;
+  const grid = document.getElementById('dashboard');
+  const gridW = grid.offsetWidth;
+  const colWidth = gridW / currentCols;
+
+  function onMove(ev) {
+    const cx = ev.type === 'touchmove' ? ev.touches[0].clientX : ev.clientX;
+    const cy = ev.type === 'touchmove' ? ev.touches[0].clientY : ev.clientY;
+    const dx = cx - startX;
+    const dy = cy - startY;
+    const newSpan = Math.max(1, Math.min(currentCols, Math.round((startW + dx) / colWidth)));
+    const newH = Math.max(200, startH + dy);
+    card.style.gridRow = 'span ' + Math.max(1, Math.round(newH / 100));
+    if (newSpan === currentCols) {
+      card.className = card.className.replace(/\s*span-\d+/g, '') + ' span-full';
+    } else if (newSpan > 1) {
+      card.className = card.className.replace(/\s*span-\d+/g, '').replace('span-full', '') + ' span-' + newSpan;
+    } else {
+      card.className = card.className.replace(/\s*span-\d+/g, '').replace('span-full', '');
+    }
+  }
+  function onEnd() {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onEnd);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onEnd);
+  }
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend', onEnd);
+}
 
 async function load(){
   if(refreshController) refreshController.abort();
@@ -305,28 +398,38 @@ async function load(){
         html+=cardWrap('card-unifi','📡','UniFi Dream Router',uHtml);
       }
 
-      // LATENCY HEATMAP (WAN = gateway ping, WAN1 = ISP ping)
-      if(latency&&(latency.wan.length||latency.wan1.length)){
-        let latHtml='<div class="heatmap-container">';
-        if(latency.wan&&latency.wan.length){
-          latHtml+='<div class="heatmap-row"><span class="heatmap-label">WAN GW</span><div class="heatmap-bars" id="heatmap-wan">';
-          latency.wan.forEach(s=>{latHtml+='<div class="heatmap-bar" style="background:'+latencyColor(s.value)+'" title="'+(s.value||0).toFixed(0)+'ms"></div>'});
-          latHtml+='</div></div>';
+      // INTERNET LATENCY (from UniFi)
+      if(unifi&&unifi.online&&(unifi.latency_avg||unifi.wan1_latency)){
+        const wanLat=unifi.latency_avg||0;
+        const wan1Lat=unifi.wan1_latency||0;
+        const wanColor=wanLat<20?'var(--green)':wanLat<50?'var(--cyan)':wanLat<100?'var(--yellow)':wanLat<200?'var(--orange)':'var(--red)';
+        const wan1Color=wan1Lat<20?'var(--green)':wan1Lat<50?'var(--cyan)':wan1Lat<100?'var(--yellow)':wan1Lat<200?'var(--orange)':'var(--red)';
+        let latHtml='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">';
+        latHtml+='<div style="background:var(--border);border-radius:8px;padding:10px;text-align:center">';
+        latHtml+='<div style="font-size:0.55rem;color:var(--muted);text-transform:uppercase;margin-bottom:4px">WAN Latency</div>';
+        latHtml+='<div style="font-size:var(--fs-xl);font-weight:800;color:'+wanColor+'">'+wanLat.toFixed(0)+'ms</div>';
+        latHtml+='<div style="font-size:var(--fs-xs);color:var(--muted);margin-top:2px">'+((wanLat<20?'Excellent':wanLat<50?'Good':wanLat<100?'Fair':wanLat<200?'Poor':'Bad'))+'</div>';
+        latHtml+='</div>';
+        if(wan1Lat>0){
+          latHtml+='<div style="background:var(--border);border-radius:8px;padding:10px;text-align:center">';
+          latHtml+='<div style="font-size:0.55rem;color:var(--muted);text-transform:uppercase;margin-bottom:4px">WAN1 Latency</div>';
+          latHtml+='<div style="font-size:var(--fs-xl);font-weight:800;color:'+wan1Color+'">'+wan1Lat.toFixed(0)+'ms</div>';
+          latHtml+='<div style="font-size:var(--fs-xs);color:var(--muted);margin-top:2px">'+((wan1Lat<20?'Excellent':wan1Lat<50?'Good':wan1Lat<100?'Fair':wan1Lat<200?'Poor':'Bad'))+'</div>';
+          latHtml+='</div>';
         }
-        if(latency.wan1&&latency.wan1.length){
-          latHtml+='<div class="heatmap-row"><span class="heatmap-label">WAN1 ISP</span><div class="heatmap-bars" id="heatmap-wan1">';
-          latency.wan1.forEach(s=>{latHtml+='<div class="heatmap-bar" style="background:'+latencyColor(s.value)+'" title="'+(s.value||0).toFixed(0)+'ms"></div>'});
-          latHtml+='</div></div>';
-        }
-        latHtml+='<div class="heatmap-scale"><span>0ms</span><span>50ms</span><span>100ms</span><span>200ms+</span></div></div>';
-        html+=cardWrap('card-latency','📊','Latency (10 min) — WAN GW / WAN1 ISP',latHtml,'span-full');
+        latHtml+='</div>';
+        html+=cardWrap('card-latency','📊','Internet Latency (UniFi)',latHtml);
       }
 
       // LIVE CLIENTS (sortable table)
       if(unifiClients&&unifiClients.clients){
         window._uc=unifiClients.clients;
         window._ucSort=ucSortState;
-        let cHtml='<input type="text" id="ucSearch" placeholder="Search..." style="width:100%;padding:6px 10px;margin-bottom:8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:var(--fs-xs)" oninput="_renderUC()">';
+        let cHtml='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">';
+        cHtml+='<input type="text" id="ucSearch" placeholder="Search..." style="flex:1;min-width:120px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:var(--fs-xs)" oninput="_renderUC()">';
+        cHtml+='<div style="display:flex;align-items:center;gap:3px;font-size:var(--fs-xs);color:var(--muted)">Rows:';
+        [5,10,25,50,999].forEach(n=>{const lbl=n===999?'All':n;const act=n===ucRowLimit?'active':'';cHtml+='<button class="btn uc-limit-btn '+act+'" onclick="setUCLimit('+n+')" style="padding:4px 8px;min-height:28px;font-size:var(--fs-xs)">'+lbl+'</button>'});
+        cHtml+='</div></div>';
         cHtml+='<div class="table-scroll"><table class="client-table"><thead><tr>';
         cHtml+='<th onclick="_sortUC(\'#\')" data-sort="#">#<span class="sort-arrow" id="th-#"></span></th>';
         cHtml+='<th onclick="_sortUC(\'name\')" data-sort="name">Client<span class="sort-arrow" id="th-name"></span></th>';
@@ -463,6 +566,7 @@ async function load(){
 
       document.getElementById('dashboard').innerHTML=html;
       collapsedCards.forEach(id=>{const el=document.getElementById(id);if(el)el.classList.add('collapsed')});
+      applyCardOrder();
 
       if(window._donutData){
         const ctx=document.getElementById('donutChart');
@@ -487,26 +591,6 @@ async function load(){
       if(el('v-net-wired'))el('v-net-wired').textContent=n.wired||0;
       if(el('v-wan-down'))el('v-wan-down').textContent=fmtBps(wanDown);
       if(el('v-wan-up'))el('v-wan-up').textContent=fmtBps(wanUp);
-
-      // Update latency heatmap bars
-      if(latency){
-        if(latency.wan&&latency.wan.length){
-          const wanBars=document.getElementById('heatmap-wan');
-          if(wanBars){
-            let bars='';
-            latency.wan.forEach(s=>{bars+='<div class="heatmap-bar" style="background:'+latencyColor(s.value)+'" title="'+(s.value||0).toFixed(0)+'ms"></div>'});
-            wanBars.innerHTML=bars;
-          }
-        }
-        if(latency.wan1&&latency.wan1.length){
-          const wan1Bars=document.getElementById('heatmap-wan1');
-          if(wan1Bars){
-            let bars='';
-            latency.wan1.forEach(s=>{bars+='<div class="heatmap-bar" style="background:'+latencyColor(s.value)+'" title="'+(s.value||0).toFixed(0)+'ms"></div>'});
-            wan1Bars.innerHTML=bars;
-          }
-        }
-      }
 
       // Update client table without rebuilding
       if(unifiClients&&unifiClients.clients){
@@ -708,6 +792,16 @@ function _sortUC(k){
   _renderUC();
 }
 
+function setUCLimit(n){
+  ucRowLimit=n;
+  localStorage.setItem('ho_uc_limit',n);
+  document.querySelectorAll('.uc-limit-btn').forEach(b=>{
+    const v=parseInt(b.textContent==='All'?'999':b.textContent);
+    b.classList.toggle('active',v===n);
+  });
+  _renderUC();
+}
+
 function _renderUC(){
   if(!window._uc)return;
   const q=(document.getElementById('ucSearch')?document.getElementById('ucSearch').value:'').toLowerCase();
@@ -716,10 +810,12 @@ function _renderUC(){
   c.sort(function(a,b){var va=a[k],vb=b[k];if(k==='is_wired'){va=va?1:0;vb=vb?1:0;return d?vb-va:va-vb}if(k==='#'){return d?b.index-a.index:a.index-b.index}va=va||0;vb=vb||0;if(typeof va==='string')return d?vb.localeCompare(va):va.localeCompare(vb);return d?vb-va:va-vb});
   const body=document.getElementById('ucBody');
   const countEl=document.getElementById('ucCount');
-  if(countEl)countEl.textContent='Showing '+c.length+' of '+window._uc.length+' ('+window._uc.filter(x=>!x.is_wired).length+' WiFi, '+window._uc.filter(x=>x.is_wired).length+' wired)';
+  const show=c.slice(0,ucRowLimit);
+  const total=window._uc.length;
+  if(countEl)countEl.textContent='Showing '+show.length+' of '+c.length+' total'+(c.length!==total?' ('+c.length+' matched filter)':'')+' · '+window._uc.filter(x=>!x.is_wired).length+' WiFi, '+window._uc.filter(x=>x.is_wired).length+' wired';
   if(!body)return;
   let rows='';
-  c.forEach(function(x,i){
+  show.forEach(function(x,i){
     var cn=x.is_wired?'<span class="badge wired">Wired</span>':'<span class="badge wifi">'+(x.essid||'WiFi')+'</span>';
     var sg=x.is_wired?'-':(x.rssi||0)+' dBm';
     var sc=x.is_wired?'':(x.rssi>-60?'var(--green)':x.rssi>-75?'var(--yellow)':'var(--red)');
@@ -728,7 +824,9 @@ function _renderUC(){
     var tb=x.is_wired?'-':((x.rx_bytes+x.tx_bytes)/1048576).toFixed(0)+' MB';
     rows+='<tr><td style="color:var(--muted);font-size:0.65rem">'+(i+1)+'</td><td style="font-weight:600">'+(x.name||x.mac)+'</td><td>'+(x.ip||'-')+'</td><td>'+cn+'</td><td style="color:'+sc+'">'+sg+'</td><td style="font-weight:700">'+rx+'</td><td style="font-weight:700">'+tx+'</td><td style="color:var(--muted)">'+tb+'</td></tr>';
   });
+  if(ucRowLimit<c.length)rows+='<tr><td colspan="8" style="text-align:center;color:var(--accent);padding:8px;font-size:var(--fs-xs)">+ '+(c.length-ucRowLimit)+' more — increase row limit or use search</td></tr>';
   body.innerHTML=rows;
+  document.querySelectorAll('.uc-limit-btn').forEach(b=>{const v=b.textContent==='All'?999:parseInt(b.textContent);b.classList.toggle('active',v===ucRowLimit)});
   document.querySelectorAll('[id^="th-"]').forEach(el=>el.textContent='');
   const th=document.getElementById('th-'+window._ucSort.k);
   if(th)th.textContent=window._ucSort.d?' ▲':' ▼';

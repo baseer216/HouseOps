@@ -3,11 +3,38 @@
   "short_name": "HouseOPS",
   "description": "Smart Home Operations Dashboard",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
   "background_color": "#0a0e17",
   "theme_color": "#0a0e17",
+  "categories": ["utilities", "productivity"],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Main operations dashboard",
+      "url": "/",
+      "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"}]
+    },
+    {
+      "name": "Network",
+      "short_name": "Network",
+      "description": "Detailed network view",
+      "url": "/network",
+      "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"}]
+    },
+    {
+      "name": "Switches",
+      "short_name": "Switches",
+      "description": "Switch monitoring details",
+      "url": "/switches",
+      "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"}]
+    }
+  ],
   "icons": [
-    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
-    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png"}
+    {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
   ]
 }

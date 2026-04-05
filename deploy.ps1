@@ -12,7 +12,9 @@ $FILES = @(
     @{ Local = "$SRC\backend\main.py"; Remote = "/opt/houseops/backend/main.py" },
     @{ Local = "$SRC\frontend\index.html"; Remote = "/opt/houseops/frontend/index.html" },
     @{ Local = "$SRC\frontend\network.html"; Remote = "/opt/houseops/frontend/network.html" },
-    @{ Local = "$SRC\frontend\switches.html"; Remote = "/opt/houseops/frontend/switches.html" }
+    @{ Local = "$SRC\frontend\switches.html"; Remote = "/opt/houseops/frontend/switches.html" },
+    @{ Local = "$SRC\frontend\manifest.json"; Remote = "/opt/houseops/frontend/manifest.json" },
+    @{ Local = "$SRC\frontend\sw.js"; Remote = "/opt/houseops/frontend/sw.js" }
 )
 
 Write-Host "=== HouseOPS Deploy ===" -ForegroundColor Cyan
@@ -41,6 +43,8 @@ pct push $VMID /tmp/main.py /opt/houseops/backend/main.py &&
 pct push $VMID /tmp/index.html /opt/houseops/frontend/index.html &&
 pct push $VMID /tmp/network.html /opt/houseops/frontend/network.html &&
 pct push $VMID /tmp/switches.html /opt/houseops/frontend/switches.html &&
+pct push $VMID /tmp/manifest.json /opt/houseops/frontend/manifest.json &&
+pct push $VMID /tmp/sw.js /opt/houseops/frontend/sw.js &&
 pct exec $VMID -- systemctl restart houseops &&
 echo 'RESTART_OK'
 "@
