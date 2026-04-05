@@ -7,6 +7,16 @@
 <title>HouseOPS - Switches</title>
 <link rel="manifest" href="/manifest.json">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="apple-mobile-web-app-title" content="HouseOPS">
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .then(reg => console.log('SW registered:', reg.scope))
+      .catch(err => console.log('SW registration failed:', err));
+  });
+}
+</script>
 <style>
 :root{--bg:#0a0e17;--card:#111827;--border:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--purple:#a855f7}
 *{margin:0;padding:0;box-sizing:border-box}
@@ -42,7 +52,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 </style>
 </head>
 <body>
-<div class="header"><h1><span>House</span>OPS - Switches</h1><a href="/">← Dashboard</a></div>
+<div class="header"><a href="/"><h1><span>House</span>OPS - Switches</h1></a><a href="/">← Dashboard</a></div>
 <div class="refresh-bar"><span id="lastUpdate">Loading...</span><button onclick="load()">↻ Refresh</button></div>
 <div class="container" id="switchContainer"><div class="loading">Loading switch data...</div></div>
 <script>
@@ -75,7 +85,7 @@ async function load(){
   }catch(e){document.getElementById('switchContainer').innerHTML=`<div class="loading" style="color:var(--red)">Error: ${e.message}</div>`}
 }
 load();
-setInterval(load,30000);
+setInterval(load,5000);
 </script>
 </body>
 </html>
