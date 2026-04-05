@@ -1,18 +1,20 @@
 # HouseOPS Deploy Script
 # Usage: .\deploy.ps1
-# Deploys updated backend + frontend to LXC 200 on Proxmox
+# Deploys updated backend + frontend to LXC on Proxmox
 
 $ErrorActionPreference = "Stop"
 
-$PROXMOX = "root@10.100.1.253"
+# Configure these for your environment
+$PROXMOX = "root@YOUR_PROXMOX_IP"
 $VMID = 200
-$SRC = "C:\Users\user\Documents\VibeCode\starthere\houseops"
+$SRC = "C:\path\to\houseops"
 
 $FILES = @(
     @{ Local = "$SRC\backend\main.py"; Remote = "/opt/houseops/backend/main.py" },
     @{ Local = "$SRC\frontend\index.html"; Remote = "/opt/houseops/frontend/index.html" },
     @{ Local = "$SRC\frontend\network.html"; Remote = "/opt/houseops/frontend/network.html" },
     @{ Local = "$SRC\frontend\switches.html"; Remote = "/opt/houseops/frontend/switches.html" },
+    @{ Local = "$SRC\frontend\cameras.html"; Remote = "/opt/houseops/frontend/cameras.html" },
     @{ Local = "$SRC\frontend\manifest.json"; Remote = "/opt/houseops/frontend/manifest.json" },
     @{ Local = "$SRC\frontend\sw.js"; Remote = "/opt/houseops/frontend/sw.js" }
 )
@@ -43,6 +45,7 @@ pct push $VMID /tmp/main.py /opt/houseops/backend/main.py &&
 pct push $VMID /tmp/index.html /opt/houseops/frontend/index.html &&
 pct push $VMID /tmp/network.html /opt/houseops/frontend/network.html &&
 pct push $VMID /tmp/switches.html /opt/houseops/frontend/switches.html &&
+pct push $VMID /tmp/cameras.html /opt/houseops/frontend/cameras.html &&
 pct push $VMID /tmp/manifest.json /opt/houseops/frontend/manifest.json &&
 pct push $VMID /tmp/sw.js /opt/houseops/frontend/sw.js &&
 pct exec $VMID -- systemctl restart houseops &&
@@ -59,8 +62,9 @@ Write-Host ""
 # Step 3: Verify
 Write-Host "[3/3] Verifying..." -ForegroundColor Yellow
 Start-Sleep -Seconds 3
+$TARGET_IP = "YOUR_LXC_IP"
 try {
-    $r = Invoke-WebRequest -Uri "http://10.100.1.200:8000/" -TimeoutSec 5 -UseBasicParsing
+    $r = Invoke-WebRequest -Uri "http://${TARGET_IP}:8000/" -TimeoutSec 5 -UseBasicParsing
     if ($r.StatusCode -eq 200) {
         Write-Host "  Dashboard: OK" -ForegroundColor Green
     }
@@ -69,7 +73,7 @@ try {
 }
 
 try {
-    $r = Invoke-WebRequest -Uri "http://10.100.1.200:8000/api/dashboard" -TimeoutSec 5 -UseBasicParsing
+    $r = Invoke-WebRequest -Uri "http://${TARGET_IP}:8000/api/dashboard" -TimeoutSec 5 -UseBasicParsing
     if ($r.StatusCode -eq 200) {
         Write-Host "  API: OK" -ForegroundColor Green
     }
@@ -79,6 +83,6 @@ try {
 
 Write-Host ""
 Write-Host "=== Deploy Complete ===" -ForegroundColor Cyan
-Write-Host "Dashboard: http://10.100.1.200:8000/" -ForegroundColor Cyan
-Write-Host "Network:   http://10.100.1.200:8000/network" -ForegroundColor Cyan
-Write-Host "Switches:  http://10.100.1.200:8000/switches" -ForegroundColor Cyan
+Write-Host "Dashboard: http://${TARGET_IP}:8000/" -ForegroundColor Cyan
+Write-Host "Network:   http://${TARGET_IP}:8000/network" -ForegroundColor Cyan
+Write-Host "Switches: http://${TARGET_IP}:8000/switches" -ForegroundColor Cyan

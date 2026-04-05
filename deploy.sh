@@ -1,12 +1,15 @@
 #!/bin/bash
 # HouseOPS - One-click Proxmox LXC Deployment
 # Usage: bash deploy.sh
+# 
+# IMPORTANT: Update the variables below for your network before running
 
 set -e
 
+# LXC Configuration - UPDATE THESE
 VMID=200
 HOSTNAME="houseops"
-PASSWORD="houseops2026"
+PASSWORD="YOUR_SECURE_PASSWORD"
 IP="10.0.0.200/24"
 GW="10.0.0.1"
 DNS="10.0.0.1"
@@ -16,9 +19,9 @@ DISK=16
 STORAGE="local-lvm"
 TEMPLATE="debian-13-standard_13.1-2_amd64.tar.zst"
 
-# UniFi config
+# UniFi Configuration - UPDATE THESE
 UNIFI_IP="10.0.0.1"
-UNIFI_KEY="vKBN69Exrt7ud2gHx3iNZvVFh5yZdXEu"
+UNIFI_KEY="YOUR_UNIFI_API_KEY"
 
 echo "=== HouseOPS LXC Deployment ==="
 echo "VM ID: $VMID | IP: $IP"

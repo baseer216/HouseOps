@@ -145,7 +145,9 @@ def _guess_room(eid, attrs):
 
 def ping_host(ip, count=2):
     try:
-        r = subprocess.run(["ping", "-c", str(count), "-W", "2", ip], capture_output=True, text=True, timeout=8)
+        # Use full path to ping
+        cmd = f"/bin/ping -c {count} -W 2 {ip}"
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=8)
         for line in r.stdout.split('\n'):
             if 'rtt' in line or 'round-trip' in line:
                 parts = line.split('/')
@@ -154,7 +156,7 @@ def ping_host(ip, count=2):
         if r.returncode != 0:
             return {"reachable": False, "avg_ms": None, "loss": 100}
         return {"reachable": True, "avg_ms": 0, "loss": 0}
-    except:
+    except Exception as e:
         return {"reachable": False, "avg_ms": None, "loss": 100}
 
 def http_test(url, timeout=3):
@@ -270,6 +272,8 @@ _NETWORK_DEVICES = [
     {"name": "UniFi Dream Router", "ip": UNIFI_IP, "type": "router"},
     {"name": "Proxmox", "ip": PVE_IP, "type": "server"},
     {"name": "Home Assistant", "ip": os.getenv("HA_IP", ""), "type": "server"},
+    {"name": "Windows Server", "ip": os.getenv("WINDOWS_SERVER_IP", ""), "type": "server"},
+    {"name": "Garage Door", "ip": os.getenv("GARAGE_DOOR_IP", ""), "type": "iot"},
 ]
 for sw in SWITCHES:
     _NETWORK_DEVICES.append({"name": sw["name"], "ip": sw["ip"], "type": "switch"})
@@ -302,32 +306,51 @@ def get_device_health_summary():
     result = []
     for dev in _NETWORK_DEVICES:
         ip = dev["ip"]
-        data = _device_health.get(ip)
-        
-        if not data or not data["pings"]:
-            ping_result = ping_host(ip, 1)
-            http_status = None
-            if dev["type"] == "server":
-                url = f"http://{ip}:8123" if "100.1.120" in ip else f"https://{ip}:8006"
-                http_result = http_test(url)
-                http_status = http_result.get("status")
-            
-            status = "online" if ping_result["reachable"] else "offline"
-            result.append({"name": dev["name"], "ip": ip, "type": dev["type"], "status": status, "avg_ping_ms": ping_result["avg_ms"], "availability_pct": 100.0 if ping_result["reachable"] else 0.0, "http_status": http_status, "ping_samples": 1})
+        if not ip:
             continue
         
-        pings = data["pings"]
-        reachable = sum(1 for p in pings if p["reachable"])
-        avail = round((reachable / len(pings)) * 100, 1)
-        avg_ping = round(sum(p["avg_ms"] for p in pings if p["avg_ms"]) / max(len([p for p in pings if p["avg_ms"]]), 1), 1)
+        # Do a live ping for immediate status
+        ping_result = ping_host(ip, 2)
         
         http_status = None
-        if data["http_checks"]:
-            latest_http = data["http_checks"][-1]
-            http_status = latest_http.get("status")
+        if dev["type"] == "server":
+            try:
+                if "100.1.120" in ip:  # Home Assistant
+                    url = f"http://{ip}:8123/api/"
+                    headers = {"Authorization": f"Bearer {HA_TOKEN}"}
+                    r = requests.get(url, headers=headers, timeout=3, verify=False)
+                    http_status = r.status_code
+                elif "100.1.253" in ip:  # Proxmox
+                    url = f"https://{ip}:8006/api2/json/"
+                    headers = {"Authorization": f"PVEAPIToken={PVE_TOKEN}={PVE_SECRET}"}
+                    r = requests.get(url, headers=headers, timeout=3, verify=False)
+                    http_status = r.status_code
+                elif "100.1.5" in ip:  # Windows Server
+                    url = f"http://{ip}:5985/wsman"  # WinRM or HTTP
+                    r = requests.get(url, timeout=3, verify=False)
+                    http_status = r.status_code
+                elif "100.1.125" in ip:  # Garage Door
+                    url = f"http://{ip}:80/status"
+                    r = requests.get(url, timeout=3, verify=False)
+                    http_status = r.status_code
+            except Exception as e:
+                http_status = None
         
-        status = "online" if avail > 90 else ("degraded" if avail > 50 else "offline")
-        result.append({"name": dev["name"], "ip": ip, "type": dev["type"], "status": status, "avg_ping_ms": avg_ping, "availability_pct": avail, "http_status": http_status, "ping_samples": len(pings)})
+        # Determine real status from actual ping
+        is_reachable = ping_result.get("reachable", False)
+        status = "online" if is_reachable else "offline"
+        
+        result.append({
+            "name": dev["name"],
+            "ip": ip,
+            "type": dev["type"],
+            "status": status,
+            "avg_ping_ms": ping_result.get("avg_ms", 0),
+            "availability_pct": 100.0 if is_reachable else 0.0,
+            "http_status": http_status,
+            "ping_samples": 1
+        })
+    
     return result
 
 # ─── Uptime Kuma ──────────────────────────────────────────────
@@ -446,6 +469,18 @@ def api_uptime_kuma():
 # ─── Switch Status (instant) ──────────────────────────────────
 
 def get_switch_status(sw):
+    # First check if switch is reachable via ping
+    ping_result = ping_host(sw["ip"], 2)
+    if not ping_result.get("reachable", False):
+        return {
+            "name": sw["name"], "ip": sw["ip"], "model": sw.get("model", ""),
+            "is_core": sw.get("is_core", False),
+            "online": False, "total_ports": 0, "ports_up": 0, "ports_down": 0,
+            "uptime_days": 0, "ports": [], "traffic": [], 
+            "error": "Switch not reachable via ping",
+            "ping_status": "unreachable"
+        }
+    
     try:
         num_ports_raw = snmp_get(sw["ip"], sw["community"], "1.3.6.1.2.1.2.1.0")
         if not num_ports_raw:
@@ -504,8 +539,10 @@ def get_switch_status(sw):
     except Exception as e:
         return {
             "name": sw["name"], "ip": sw["ip"], "model": sw["model"], "is_core": sw.get("is_core", False),
-            "online": False, "total_ports": 0, "ports_up": 0, "ports_down": 0,
-            "uptime_days": 0, "ports": [], "traffic": [], "error": str(e),
+            "online": True, "total_ports": 0, "ports_up": 0, "ports_down": 0,
+            "uptime_days": 0, "ports": [], "traffic": [], 
+            "error": "SNMP unavailable - showing ping status only",
+            "ping_status": "reachable"
         }
 
 # ─── API Endpoints ────────────────────────────────────────────
@@ -839,6 +876,150 @@ def api_switch_ports(switch_ip: str):
 def api_device_health():
     return {"devices": get_device_health_summary()}
 
+@app.get("/api/cameras")
+def api_cameras():
+    cached = cache.get("cameras")
+    if cached is not None:
+        return cached
+    try:
+        entities = ha_get("/states")
+        cameras = []
+        for e in entities:
+            eid = e.get("entity_id", "")
+            domain = eid.split(".")[0] if "." in eid else ""
+            if domain != "camera":
+                continue
+            eid_lower = eid.lower()
+            attrs = e.get("attributes", {})
+            state = e.get("state", "unavailable")
+            camera_type = ""
+            if "tapo" in eid_lower:
+                camera_type = "Tapo"
+            elif "reolink" in eid_lower:
+                camera_type = "Reolink"
+            elif "ring" in eid_lower:
+                camera_type = "Ring"
+            elif "uvc" in eid_lower or "unifi" in eid_lower:
+                camera_type = "UniFi"
+            else:
+                camera_type = "Other"
+            cameras.append({
+                "name": attrs.get("friendly_name", e.get("entity_id")),
+                "entity": e.get("entity_id"),
+                "state": state,
+                "type": camera_type,
+                "model": attrs.get("model", ""),
+                "brand": attrs.get("brand", ""),
+            })
+        result = {"cameras": cameras, "total": len(cameras)}
+    except Exception as e:
+        result = {"cameras": [], "total": 0, "error": str(e)}
+    cache.set("cameras", result, ttl=30)
+    return result
+
+@app.get("/api/camera-insights")
+def api_camera_insights():
+    cached = cache.get("camera_insights")
+    if cached is not None:
+        return cached
+    
+    insights = []
+    
+    try:
+        entities = ha_get("/states")
+        
+        # Binary sensors for motion, person, vehicle, pet detection
+        motion_sensors = []
+        person_detections = []
+        vehicle_detections = []
+        pet_detections = []
+        
+        # Camera states
+        idle_cameras = []
+        streaming_cameras = []
+        
+        # Weather-related camera sensors
+        weather_cameras = []
+        
+        for e in entities:
+            eid = e.get("entity_id", "").lower()
+            attrs = e.get("attributes", {})
+            state = e.get("state", "unknown")
+            
+            domain = e.get("entity_id", "").split(".")[0] if "." in e.get("entity_id", "") else ""
+            
+            # Binary sensors - motion, person, vehicle, pet
+            if domain == "binary_sensor":
+                if "motion" in eid and state == "on":
+                    motion_sensors.append({"name": attrs.get("friendly_name", e.get("entity_id")), "eid": eid})
+                if "person" in eid and state == "on":
+                    person_detections.append({"name": attrs.get("friendly_name", e.get("entity_id")), "eid": eid})
+                if "vehicle" in eid and state == "on":
+                    vehicle_detections.append({"name": attrs.get("friendly_name", e.get("entity_id")), "eid": eid})
+                if "pet" in eid and state == "on":
+                    pet_detections.append({"name": attrs.get("friendly_name", e.get("entity_id")), "eid": eid})
+            
+            # Camera entities - check state
+            if domain == "camera":
+                cam_name = (attrs.get("friendly_name") or e.get("entity_id") or "").lower()
+                if state in ["streaming", "recording"]:
+                    streaming_cameras.append({"name": attrs.get("friendly_name") or e.get("entity_id")})
+                elif state == "idle":
+                    idle_cameras.append({"name": attrs.get("friendly_name") or e.get("entity_id")})
+                
+                # Weather-related
+                if "weather" in cam_name:
+                    weather_cameras.append({"name": attrs.get("friendly_name") or e.get("entity_id"), "state": state})
+        
+        # Generate insights based on what we found
+        
+        # Active motion
+        if len(motion_sensors) >= 3:
+            insights.append({"level": "alert", "icon": "🚨", "title": "High Motion Activity", "detail": f"{len(motion_sensors)} cameras detecting motion - possible activity"})
+        elif len(motion_sensors) >= 1:
+            insights.append({"level": "info", "icon": "👀", "title": "Motion Detected", "detail": f"{len(motion_sensors)} camera(s) with active motion: {', '.join([s['name'].split()[0] for s in motion_sensors[:3]])}"})
+        
+        # Person detections
+        if person_detections:
+            insights.append({"level": "info", "icon": "👤", "title": "Person Detected", "detail": f"Person detected on {person_detections[0]['name']}"})
+        
+        # Vehicle detections  
+        if vehicle_detections:
+            insights.append({"level": "info", "icon": "🚗", "title": "Vehicle Detected", "detail": f"Vehicle detected on {vehicle_detections[0]['name']}"})
+        
+        # Pet activity
+        if pet_detections:
+            insights.append({"level": "info", "icon": "🐕", "title": "Pet Activity", "detail": f"Pet detected on {pet_detections[0]['name']}"})
+        
+        # Camera status
+        total_cams = len(streaming_cameras) + len(idle_cameras)
+        if streaming_cameras:
+            insights.append({"level": "ok", "icon": "📹", "title": "Cameras Active", "detail": f"{len(streaming_cameras)} camera(s) streaming/recording, {len(idle_cameras)} idle"})
+        elif total_cams > 0:
+            insights.append({"level": "info", "icon": "⏸️", "title": "All Cameras Idle", "detail": f"{total_cams} camera(s) connected but idle"})
+        
+        # Weather cameras
+        if weather_cameras:
+            for wc in weather_cameras[:2]:
+                insights.append({"level": "info", "icon": "🌤️", "title": f"Outdoor Camera: {wc['name']}", "detail": f"Status: {wc['state']}"})
+        
+        # Connectivity issues
+        binary_entities = [e for e in entities if e.get("entity_id", "").startswith("binary_sensor.") and "connectivity" in e.get("entity_id", "")]
+        offline_sensors = [e for e in binary_entities if e.get("state") == "off"]
+        if offline_sensors:
+            insights.append({"level": "warning", "icon": "⚠️", "title": "Camera Connectivity Issues", "detail": f"{len(offline_sensors)} camera(s) showing offline"})
+        
+        # If no insights, provide a summary
+        if not insights:
+            insights.append({"level": "ok", "icon": "✅", "title": "All Quiet", "detail": f"No recent activity detected on {total_cams} cameras"})
+            
+    except Exception as e:
+        insights = [{"level": "error", "icon": "❌", "title": "Insights Error", "detail": str(e)}]
+    
+    result = {"insights": insights}
+    cache.set("camera_insights", result, ttl=60)
+    return result
+
 # ─── Insights API ─────────────────────────────────────────────
 
 @app.get("/api/insights")
@@ -915,8 +1096,12 @@ def api_insights():
         
         for sw in SWITCHES:
             sw_data = get_switch_status(sw)
-            if not sw_data["online"]:
-                insights.append({"level": "critical", "icon": "🔌", "title": f"{sw['name']} Offline", "detail": sw_data.get("error", "No response")})
+            if not sw_data.get("online", False):
+                ping_status = sw_data.get("ping_status", "")
+                if ping_status == "unreachable":
+                    insights.append({"level": "critical", "icon": "🔌", "title": f"{sw['name']} Offline", "detail": sw_data.get("error", "No response")})
+                else:
+                    insights.append({"level": "info", "icon": "🔌", "title": f"{sw['name']} SNMP Unavailable", "detail": "Switch is reachable via ping but SNMP is not responding"})
             else:
                 avg5 = get_switch_5min_avg(sw["ip"])
                 if avg5:
@@ -1099,6 +1284,10 @@ def serve_network():
 @app.get("/switches")
 def serve_switches():
     return FileResponse(os.path.join(frontend_dir, "switches.html"))
+
+@app.get("/cameras")
+def serve_cameras():
+    return FileResponse(os.path.join(frontend_dir, "cameras.html"))
 
 @app.get("/")
 def serve_frontend():

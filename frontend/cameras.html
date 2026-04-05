@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a0e17">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>HouseOPS - Security Cameras</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="apple-mobile-web-app-title" content="HouseOPS">
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .then(reg => console.log('SW registered:', reg.scope))
+      .catch(err => console.log('SW registration failed:', err));
+  });
+}
+</script>
+<style>
+:root{--bg:#0a0e17;--card:#111827;--border:#1e293b;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;--purple:#a855f7;--fs-xs:clamp(0.58rem,1.4vw,0.68rem);--fs-sm:clamp(0.68rem,1.7vw,0.78rem);--fs-md:clamp(0.78rem,1.9vw,0.88rem);--pad:clamp(10px,2.5vw,16px);--gap:clamp(8px,2vw,12px);--radius:10px}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh;min-height:100dvh;padding-bottom:env(safe-area-inset-bottom,20px);touch-action:manipulation;overflow-x:hidden}
+.header{background:linear-gradient(135deg,#1e3a5f,#0a0e17);padding:max(env(safe-area-inset-top,10px),10px) clamp(12px,3vw,20px) 8px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
+.header a{text-decoration:none;color:inherit}
+.header h1{font-size:clamp(1rem,3vw,1.3rem);font-weight:700}.header h1 span{color:var(--accent)}
+.header .back{color:var(--accent);text-decoration:none;font-size:clamp(0.8rem,2vw,1rem)}
+.container{padding:clamp(10px,2vw,16px)}
+.insight-card{background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:12px;padding:clamp(10px,2.5vw,16px)}
+.insight-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.insight-header h2{font-size:clamp(0.9rem,2.5vw,1.1rem);font-weight:700}
+.badge{padding:4px 10px;border-radius:6px;font-size:0.75rem;font-weight:600}
+.badge.online{background:rgba(34,197,94,0.15);color:var(--green)}
+.badge.idle{background:rgba(234,179,8,0.15);color:var(--yellow)}
+.badge.offline{background:rgba(239,68,68,0.15);color:var(--red)}
+.stat-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)}
+.stat-row:last-child{border-bottom:none}
+.stat-label{color:var(--muted);font-size:var(--fs-xs)}
+.stat-value{font-weight:600}
+.camera-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.camera-card{background:var(--border);border-radius:8px;padding:12px}
+.camera-card .cam-name{font-weight:600;margin-bottom:8px;font-size:var(--fs-sm)}
+.camera-card .cam-meta{display:flex;justify-content:space-between;align-items:center}
+.camera-card .cam-state{font-size:var(--fs-xs)}
+.camera-card .cam-type{font-size:var(--fs-xs);color:var(--muted)}
+.summary-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-bottom:16px}
+.summary-stat{background:var(--border);border-radius:8px;padding:12px;text-align:center}
+.summary-stat .num{font-size:var(--fs-md);font-weight:800;color:var(--accent)}
+.summary-stat .label{font-size:var(--fs-xs);color:var(--muted);margin-top:2px}
+.insight-box{background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.12);border-radius:8px;padding:10px;margin-bottom:8px}
+.insight-box.warning{background:rgba(234,179,8,0.06);border-color:rgba(234,179,8,0.12)}
+.insight-box.alert{background:rgba(239,68,68,0.06);border-color:rgba(239,68,68,0.12)}
+.refresh-bar{display:flex;justify-content:space-between;align-items:center;padding:8px clamp(12px,3vw,20px);background:var(--card);border-bottom:1px solid var(--border);font-size:var(--fs-xs);color:var(--muted)}
+.refresh-bar button{padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:0.75rem}
+.refresh-bar button:active{background:var(--accent);color:#fff}
+.loading{text-align:center;padding:30px;color:var(--muted)}
+.toolbar{display:flex;align-items:center;gap:5px;padding:6px clamp(12px,3vw,20px);background:var(--card);border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.toolbar::-webkit-scrollbar{display:none}
+.toolbar .btn{padding:7px 10px;border-radius:7px;font-size:var(--fs-xs);font-weight:500;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--muted);min-height:38px;white-space:nowrap;flex-shrink:0}
+.toolbar .btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+</style>
+</head>
+<body>
+<a href="/"><div class="header"><h1><span>House</span>OPS - Security Cameras</h1><a class="back">← Dashboard</a></div></a>
+<div class="toolbar">
+  <button class="btn" onclick="window.location.href='/'">🏠 Dashboard</button>
+  <button class="btn" onclick="window.location.href='/network'">🌐 Network</button>
+  <button class="btn" onclick="window.location.href='/switches'">🔌 Switches</button>
+  <button class="btn" onclick="window.location.href='/cameras'">📹 Cameras</button>
+</div>
+<div class="refresh-bar"><span id="lastUpdate">Loading...</span><button onclick="load()">↻ Refresh</button></div>
+<div class="container" id="container"><div class="loading">Loading camera data...</div></div>
+<script>
+const FETCH_TIMEOUT = 15000;
+let firstLoad = true;
+let refreshController = null;
+
+function fetchWithTimeout(url, timeout = FETCH_TIMEOUT) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  return fetch(url, { signal: controller.signal }).then(r => { clearTimeout(id); return r.json(); }).catch(e => { clearTimeout(id); if (e.name === 'AbortError') return {}; return {}; });
+}
+
+async function load(){
+  if(refreshController) refreshController.abort();
+  refreshController = new AbortController();
+  try{
+    const [cameras, insights] = await Promise.all([
+      fetchWithTimeout('/api/cameras'),
+      fetchWithTimeout('/api/camera-insights')
+    ]);
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+    render(cameras, insights);
+    firstLoad = false;
+  }catch(e){
+    if(firstLoad)document.getElementById('container').innerHTML='<div class="loading" style="color:var(--red)">Error: '+e.message+'</div>';
+  }
+}
+
+function render(cameras, insights){
+  const camData = cameras.cameras || [];
+  const insightData = insights.insights || [];
+  
+  let html = '';
+  
+  // Summary Stats
+  const streaming = camData.filter(c => c.state === 'streaming' || c.state === 'recording').length;
+  const idle = camData.filter(c => c.state === 'idle').length;
+  const offline = camData.filter(c => c.state === 'unavailable' || c.state === 'unavailable').length;
+  const tapo = camData.filter(c => c.type === 'Tapo').length;
+  const reolink = camData.filter(c => c.type === 'Reolink').length;
+  const ring = camData.filter(c => c.type === 'Ring').length;
+  
+  html += '<div class="summary-stats">';
+  html += '<div class="summary-stat"><div class="num" style="color:var(--green)">'+streaming+'</div><div class="label">Active</div></div>';
+  html += '<div class="summary-stat"><div class="num" style="color:var(--yellow)">'+idle+'</div><div class="label">Idle</div></div>';
+  html += '<div class="summary-stat"><div class="num" style="color:var(--muted)">'+camData.length+'</div><div class="label">Total</div></div>';
+  html += '<div class="summary-stat"><div class="num">'+tapo+'</div><div class="label">Tapo</div></div>';
+  html += '<div class="summary-stat"><div class="num">'+reolink+'</div><div class="label">Reolink</div></div>';
+  html += '<div class="summary-stat"><div class="num">'+ring+'</div><div class="label">Ring</div></div>';
+  html += '</div>';
+  
+  // Camera Insights
+  if(insightData.length){
+    html += '<div class="insight-card"><div class="insight-header"><h2>📊 Last Hour Insights</h2></div>';
+    insightData.forEach(ins => {
+      const cls = ins.level === 'alert' ? 'alert' : ins.level === 'warning' ? 'warning' : '';
+      html += '<div class="insight-box '+cls+'"><strong>'+(ins.icon||'')+' '+ins.title+'</strong><br><span style="color:var(--muted)">'+ins.detail+'</span></div>';
+    });
+    html += '</div>';
+  }
+  
+  // Camera Grid
+  html += '<div class="insight-card"><div class="insight-header"><h2>📹 Camera List ('+camData.length+')</h2></div>';
+  html += '<div class="camera-grid">';
+  camData.forEach(cam => {
+    const stateCls = cam.state === 'streaming' || cam.state === 'recording' ? 'online' : cam.state === 'idle' ? 'idle' : 'offline';
+    const stateIcon = cam.state === 'streaming' ? '📹' : cam.state === 'recording' ? '🔴' : cam.state === 'idle' ? '⏸️' : '⚫';
+    html += '<div class="camera-card">';
+    html += '<div class="cam-name">'+cam.name+'</div>';
+    html += '<div class="cam-meta">';
+    html += '<span class="cam-state"><span class="badge '+stateCls+'">'+stateIcon+' '+cam.state+'</span></span>';
+    html += '<span class="cam-type">'+cam.type+'</span>';
+    html += '</div></div>';
+  });
+  html += '</div></div>';
+  
+  document.getElementById('container').innerHTML = html;
+}
+
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

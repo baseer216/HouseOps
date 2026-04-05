@@ -8,7 +8,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>HouseOPS</title>
 <link rel="manifest" href="/manifest.json">
-<link rel="icon" href="/icons/icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
 <meta name="apple-mobile-web-app-title" content="HouseOPS">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -188,7 +187,7 @@ let cardOrder = JSON.parse(localStorage.getItem('ho_card_order') || '[]');
 let reorderMode = false;
 let firstLoad = true;
 let refreshController = null;
-const FETCH_TIMEOUT = 15000;
+const FETCH_TIMEOUT = 4000;
 
 function fetchWithTimeout(url, timeout = FETCH_TIMEOUT) {
   const controller = new AbortController();

@@ -113,7 +113,7 @@ foreach ($f in $FILES) {
     }
 }
 # Also copy the new .env
-scp "$env:TEMP\houseops.env" "$PROXMOX:/tmp/houseops.env"
+scp "$env:TEMP\houseops.env" "${PROXMOX}:/tmp/houseops.env"
 Write-Host "  Done." -ForegroundColor Green
 Write-Host ""
 
