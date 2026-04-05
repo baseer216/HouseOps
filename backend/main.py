@@ -269,8 +269,17 @@ def get_device_health_summary():
     for dev in _NETWORK_DEVICES:
         ip = dev["ip"]
         data = _device_health.get(ip)
+        
         if not data or not data["pings"]:
-            result.append({"name": dev["name"], "ip": ip, "type": dev["type"], "status": "unknown", "avg_ping_ms": None, "availability_pct": None, "http_status": None})
+            ping_result = ping_host(ip, 1)
+            http_status = None
+            if dev["type"] == "server":
+                url = f"http://{ip}:8123" if "100.1.120" in ip else f"https://{ip}:8006"
+                http_result = http_test(url)
+                http_status = http_result.get("status")
+            
+            status = "online" if ping_result["reachable"] else "offline"
+            result.append({"name": dev["name"], "ip": ip, "type": dev["type"], "status": status, "avg_ping_ms": ping_result["avg_ms"], "availability_pct": 100.0 if ping_result["reachable"] else 0.0, "http_status": http_status, "ping_samples": 1})
             continue
         
         pings = data["pings"]
@@ -651,17 +660,47 @@ def api_insights():
     insights = []
     
     try:
-        dash = api_dashboard.__wrapped__()
-        power = api_power.__wrapped__()
-        switches_data = api_switches.__wrapped__()
-        devices = api_net_devices.__wrapped__()
-        device_health = get_device_health_summary()
+        total_w = 0
+        power_devices = []
+        indoor_temp = None
         
-        total_w = dash["power"].get("total_watts", 0)
-        indoor_temp = dash["environment"].get("indoor_temp")
-        watts_devices = power.get("all", [])
-        watts_devices = [d for d in watts_devices if d.get("watts", 0) > 0]
-        watts_devices.sort(key=lambda x: x["watts"], reverse=True)
+        try:
+            entities = ha_get("/states")
+            power_entities = [e for e in entities if e.get("attributes", {}).get("unit_of_measurement") == "W"]
+            total_w = sum(float(e["state"]) for e in power_entities if e["state"] not in ["unknown", "unavailable"])
+            for e in power_entities:
+                try:
+                    watts = float(e["state"])
+                except:
+                    watts = 0
+                power_devices.append({"name": e["attributes"].get("friendly_name", e["entity_id"]), "entity": e["entity_id"], "watts": watts})
+            
+            for e in entities:
+                eid = e.get("entity_id", "").lower()
+                attrs = e.get("attributes", {})
+                unit = attrs.get("unit_of_measurement", "")
+                if ("temperature" in eid or "temp" in eid) and unit in ["°C", "°F", "C", "F"]:
+                    if any(x in eid for x in ["indoor", "inside", "living", "main", "house", "room", "hall"]):
+                        try:
+                            indoor_temp = {"name": attrs.get("friendly_name", e["entity_id"]), "value": float(e["state"]), "unit": unit}
+                            break
+                        except:
+                            pass
+            if not indoor_temp:
+                for e in entities:
+                    eid = e.get("entity_id", "").lower()
+                    attrs = e.get("attributes", {})
+                    unit = attrs.get("unit_of_measurement", "")
+                    if ("temperature" in eid or "temp" in eid) and unit in ["°C", "°F", "C", "F"]:
+                        try:
+                            indoor_temp = {"name": attrs.get("friendly_name", e["entity_id"]), "value": float(e["state"]), "unit": unit}
+                            break
+                        except:
+                            pass
+        except:
+            pass
+        
+        watts_devices = sorted([d for d in power_devices if d.get("watts", 0) > 0], key=lambda x: x["watts"], reverse=True)
         top3 = watts_devices[:3]
         standby = [d for d in watts_devices if d["watts"] < 5]
         standby_w = sum(d["watts"] for d in standby)
@@ -684,11 +723,12 @@ def api_insights():
             monthly_cost = (standby_w / 1000) * 24 * 30 * 0.15
             insights.append({"level": "warn", "icon": "👻", "title": "Vampire Power", "detail": f"{len(standby)} devices in standby — ~${monthly_cost:.2f}/mo wasted"})
         
-        for sw in switches_data.get("switches", []):
-            if not sw["online"]:
-                insights.append({"level": "critical", "icon": "🔌", "title": f"{sw['name']} Offline", "detail": sw.get("error", "No response")})
+        for sw in SWITCHES:
+            sw_data = get_switch_status(sw)
+            if not sw_data["online"]:
+                insights.append({"level": "critical", "icon": "🔌", "title": f"{sw['name']} Offline", "detail": sw_data.get("error", "No response")})
             else:
-                avg5 = sw.get("avg_5min")
+                avg5 = get_switch_5min_avg(sw["ip"])
                 if avg5:
                     if avg5["availability_pct"] < 100:
                         insights.append({"level": "warn", "icon": "📉", "title": f"{sw['name']} Availability", "detail": f"{avg5['availability_pct']}% over last 5 min"})
@@ -697,17 +737,24 @@ def api_insights():
                     if avg5["avg_ping_ms"] and avg5["avg_ping_ms"] > 50:
                         insights.append({"level": "warn", "icon": "🐌", "title": f"{sw['name']} High Latency", "detail": f"Avg {avg5['avg_ping_ms']}ms over 5 min"})
         
+        device_health = get_device_health_summary()
         for dev in device_health:
             if dev["status"] == "offline":
                 insights.append({"level": "critical", "icon": "❌", "title": f"{dev['name']} Unreachable", "detail": f"IP: {dev['ip']}"})
             elif dev["status"] == "degraded":
                 insights.append({"level": "warn", "icon": "⚠️", "title": f"{dev['name']} Unstable", "detail": f"{dev['availability_pct']}% availability"})
         
-        wifi_clients = dash["network"].get("wifi", 0)
-        wired_clients = dash["network"].get("wired", 0)
-        total_clients = wifi_clients + wired_clients
-        if total_clients > 0 and wifi_clients / total_clients > 0.8:
-            insights.append({"level": "info", "icon": "📶", "title": "WiFi Heavy", "detail": f"{wifi_clients}/{total_clients} clients on WiFi — consider wiring stationary devices"})
+        try:
+            health = unifi_get("/stat/health")
+            wlan = next((h for h in health if h.get("subsystem") == "wlan"), {})
+            lan = next((h for h in health if h.get("subsystem") == "lan"), {})
+            wifi_clients = wlan.get("num_user", 0)
+            wired_clients = lan.get("num_user", 0)
+            total_clients = wifi_clients + wired_clients
+            if total_clients > 0 and wifi_clients / total_clients > 0.8:
+                insights.append({"level": "info", "icon": "📶", "title": "WiFi Heavy", "detail": f"{wifi_clients}/{total_clients} clients on WiFi — consider wiring stationary devices"})
+        except:
+            pass
         
         if not insights:
             insights.append({"level": "ok", "icon": "✅", "title": "All Systems Normal", "detail": "No issues detected"})
