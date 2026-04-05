@@ -470,7 +470,7 @@ async function load(){
       }
 
       setCols(currentCols);
-      updateExecSummary(dash,power,vms,unifi);
+      updateExecSummary(dash,power,vms,unifi,dns,tempSensors);
       firstLoad=false;
     } else {
       // Smooth update: only change values, don't rebuild DOM
@@ -641,7 +641,7 @@ async function load(){
         _renderVMs();
       }
 
-      updateExecSummary(dash,power,vms,unifi);
+      updateExecSummary(dash,power,vms,unifi,dns,tempSensors);
     }
   }catch(e){
     if(e.name==='AbortError') return;
@@ -649,7 +649,7 @@ async function load(){
   }
 }
 
-function updateExecSummary(dash,power,vms,unifi){
+function updateExecSummary(dash,power,vms,unifi,dns,tempSensors){
   const p=dash.power||{};const totalW=p.total_watts||0;
   const dailyKwh=(totalW/1000)*24;const monthlyCost=dailyKwh*30*KWH_COST;
   const n=dash.network||{};const px=dash.proxmox||{};
@@ -657,6 +657,11 @@ function updateExecSummary(dash,power,vms,unifi){
   const standbyDevices=wattsDevices.filter(d=>d.watts<5);
   const top3=wattsDevices.slice(0,3);
   const top3Pct=totalW>0?top3.reduce((s,d)=>s+d.watts,0)/totalW*100:0;
+  const dnsData=dns||{};
+  const totalQ=dnsData.total_queries||0;
+  const totalB=dnsData.total_blocked||0;
+  const totalPct=dnsData.total_blocked_pct||0;
+  const ts=tempSensors||[];
   const env=dash.environment||{};
   const temp=env.indoor_temp;
 
