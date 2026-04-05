@@ -1,4 +1,5 @@
 .env
+.env.restored
 __pycache__/
 *.pyc
 *.py
