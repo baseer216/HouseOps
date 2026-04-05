@@ -216,6 +216,12 @@ async function load(){
     const top3=wattsDevices.slice(0,3);
     const waterToday=water.sensors?water.sensors.find(s=>s.name.includes('total gallons today')):null;
     const waterCap=water.sensors?water.sensors.find(s=>s.name.includes('capacity remaining')):null;
+    const dnsData=dns||{};
+    const totalQ=dnsData.total_queries||0;
+    const totalB=dnsData.total_blocked||0;
+    const totalPct=dnsData.total_blocked_pct||0;
+    const activeDevices=p.devices||[];
+    const tempSensors=dash.environment?dash.environment.temp_sensors:[];
 
     if(firstLoad){
       let html='';
@@ -344,23 +350,41 @@ async function load(){
         html+=cardWrap('card-switches','🔌','Network Switches',sHtml);
       }
 
-      // ENVIRONMENT / TEMP
-      const env=dash.environment||{};
-      const temp=env.indoor_temp;
-      if(temp&&temp.value){
-        const tempVal=temp.value;
-        const tempUnit=temp.unit||'°C';
-        const tempColor=tempVal>28?'var(--red)':tempVal>25?'var(--yellow)':'var(--green)';
-        const wattsDevices2=(power.all||[]).filter(d=>d.watts).sort((a,b)=>b.watts-a.watts);
-        const totalW2=wattsDevices2.reduce((s,d)=>s+d.watts,0);
-        let tempHtml='<div class="big-stat"><span class="number" id="v-temp-val" style="color:'+tempColor+'">'+tempVal.toFixed(1)+'</span><span class="unit">'+tempUnit+'</span><div class="label" id="v-temp-name">'+temp.name+'</div></div>';
-        tempHtml+='<div class="stat-row"><span class="stat-label">Current Draw</span><span class="stat-value" id="v-temp-watts">'+totalW2.toFixed(0)+'W</span></div>';
-        if(totalW2>500&&tempVal>24){
-          tempHtml+='<div class="insight-box" style="margin-top:8px">⚠️ High power draw may be raising indoor temp</div>';
-        }else if(tempVal<22){
-          tempHtml+='<div class="insight-box" style="margin-top:8px;color:var(--green)">✅ Comfortable temperature</div>';
-        }
-        html+=cardWrap('card-temp','🌡️','Indoor Temperature',tempHtml);
+      // ENVIRONMENT / TEMP SENSORS
+      if(tempSensors.length){
+        let tHtml='';
+        const rooms={};
+        tempSensors.forEach(t=>{
+          if(!rooms[t.room])rooms[t.room]=[];
+          rooms[t.room].push(t);
+        });
+        Object.entries(rooms).sort((a,b)=>b[1].length-a[1].length).forEach(([room,sensors])=>{
+          tHtml+='<div style="font-weight:700;color:var(--accent);padding:4px 0 2px;border-bottom:1px solid var(--border);margin-top:4px">'+room+'</div>';
+          sensors.forEach(t=>{
+            const tc=t.value>28?'var(--red)':t.value>25?'var(--yellow)':'var(--green)';
+            tHtml+='<div class="stat-row"><span class="stat-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+t.name+'">'+t.name+'</span><span class="stat-value" style="color:'+tc+'">'+t.value.toFixed(1)+t.unit+'</span></div>';
+          });
+        });
+        html+=cardWrap('card-temp','🌡️','Temperature Sensors ('+tempSensors.length+')',tHtml);
+      }
+
+      // ACTIVE DEVICES (real-time energy)
+      if(activeDevices.length){
+        let aHtml='';
+        const byRoom={};
+        activeDevices.forEach(d=>{
+          if(!byRoom[d.room])byRoom[d.room]=[];
+          byRoom[d.room].push(d);
+        });
+        Object.entries(byRoom).sort((a,b)=>b[1].reduce((s,d)=>s+d.watts,0)-a[1].reduce((s,d)=>s+d.watts,0)).forEach(([room,devices])=>{
+          const roomW=devices.reduce((s,d)=>s+d.watts,0);
+          aHtml+='<div style="font-weight:700;color:var(--accent);padding:4px 0 2px;border-bottom:1px solid var(--border);margin-top:4px">'+room+' <span style="color:var(--muted);font-weight:400;font-size:var(--fs-xs)">'+roomW.toFixed(0)+'W</span></div>';
+          devices.forEach(d=>{
+            const pl=d.watts>200?'high':d.watts>50?'med':d.watts>5?'low':'standby';
+            aHtml+='<div class="stat-row"><span class="stat-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+d.name+'">'+d.name+'</span><span class="stat-value">'+d.watts.toFixed(1)+'W <span class="badge '+pl+'">'+pl.toUpperCase()+'</span></span></div>';
+          });
+        });
+        html+=cardWrap('card-active-devices','⚡','Active Devices ('+activeDevices.length+')',aHtml,'span-full');
       }
 
       // DEVICE HEALTH
@@ -643,9 +667,13 @@ function updateExecSummary(dash,power,vms,unifi){
   kpis+='<div class="exec-kpi"><span class="icon">📦</span><div class="value" style="color:var(--cyan)">'+(px.vms_running||0)+'</div><div class="label">VMs</div></div>';
   kpis+='<div class="exec-kpi"><span class="icon">🖥️</span><div class="value" style="color:'+(px.cpu_pct>70?'var(--red)':'var(--green)')+'">'+(px.cpu_pct||0)+'%</div><div class="label">CPU</div></div>';
   kpis+='<div class="exec-kpi"><span class="icon">🔌</span><div class="value" style="color:var(--purple)">'+(px.ram_pct||0)+'%</div><div class="label">RAM</div></div>';
-  if(temp&&temp.value){
-    const tc=temp.value>28?'var(--red)':temp.value>25?'var(--yellow)':'var(--green)';
-    kpis+='<div class="exec-kpi"><span class="icon">🌡️</span><div class="value" style="color:'+tc+'">'+temp.value.toFixed(1)+temp.unit+'</div><div class="label">Temp</div></div>';
+  if(totalQ>0){
+    kpis+='<div class="exec-kpi"><span class="icon">🛡️</span><div class="value" style="color:var(--accent)">'+totalPct+'%</div><div class="label">DNS Blocked</div></div>';
+  }
+  if(tempSensors.length){
+    const avgTemp=tempSensors.reduce((s,t)=>s+t.value,0)/tempSensors.length;
+    const tc=avgTemp>28?'var(--red)':avgTemp>25?'var(--yellow)':'var(--green)';
+    kpis+='<div class="exec-kpi"><span class="icon">🌡️</span><div class="value" style="color:'+tc+'">'+avgTemp.toFixed(1)+'°C</div><div class="label">Avg Temp</div></div>';
   }
   document.getElementById('execKpis').innerHTML=kpis;
 
@@ -659,7 +687,11 @@ function updateExecSummary(dash,power,vms,unifi){
   alerts+='<div class="exec-alert '+(netDown>1000000?'warn':'ok')+'">📶 '+(netDown>1000000?(netDown/1000000).toFixed(1)+' Mbps':(netDown/1000).toFixed(0)+' Kbps')+'</div>';
   alerts+='<div class="exec-alert ok">📦 '+(px.vms_running||0)+'/'+(px.vms_total||0)+' VMs</div>';
   if(unifi&&unifi.online){const uc=unifi.total_clients||0;alerts+='<div class="exec-alert ok">📡 '+uc+' UniFi clients</div>'}
-  if(temp&&temp.value&&temp.value>28)alerts+='<div class="exec-alert critical">🌡️ Hot: '+temp.value+temp.unit+'</div>';
+  if(totalQ>0)alerts+='<div class="exec-alert ok">🛡️ '+totalB.toLocaleString()+' blocked ('+totalPct+'%)</div>';
+  if(tempSensors.length){
+    const maxT=tempSensors[tempSensors.length-1];
+    if(maxT.value>28)alerts+='<div class="exec-alert critical">🌡️ Hot: '+maxT.name+' '+maxT.value+maxT.unit+'</div>';
+  }
   document.getElementById('execAlerts').innerHTML=alerts;
 }
 

@@ -115,6 +115,28 @@ def fmt_bytes(b):
     if b < 1073741824: return f"{b/1048576:.1f} MB"
     return f"{b/1073741824:.2f} GB"
 
+def _guess_room(eid, attrs):
+    name = (eid + " " + attrs.get("friendly_name", "")).lower()
+    room_map = [
+        ("kitchen", "Kitchen"), ("fridge", "Kitchen"), ("oven", "Kitchen"), ("dishwasher", "Kitchen"),
+        ("living", "Living Room"), ("lounge", "Living Room"), ("tv", "Living Room"),
+        ("bedroom", "Bedroom"), ("bed", "Bedroom"),
+        ("bath", "Bathroom"), ("shower", "Bathroom"),
+        ("office", "Office"), ("desk", "Office"), ("study", "Office"),
+        ("garage", "Garage"),
+        ("hall", "Hallway"), ("corridor", "Hallway"),
+        ("laundry", "Laundry"), ("washer", "Laundry"), ("dryer", "Laundry"),
+        ("server", "Server Room"), ("rack", "Server Room"), ("nas", "Server Room"), ("proxmox", "Server Room"),
+        ("outdoor", "Outdoor"), ("garden", "Outdoor"), ("patio", "Outdoor"),
+        ("dining", "Dining Room"),
+        ("basement", "Basement"), ("attic", "Attic"),
+        ("studio", "Studio"),
+    ]
+    for keyword, room in room_map:
+        if keyword in name:
+            return room
+    return "Other"
+
 def ping_host(ip, count=2):
     try:
         r = subprocess.run(["ping", "-c", str(count), "-W", "2", ip], capture_output=True, text=True, timeout=8)
@@ -360,9 +382,9 @@ def get_adguard():
         stats = requests.get(f"http://{ADGUARD_IP}/control/stats", timeout=5)
         status = requests.get(f"http://{ADGUARD_IP}/control/status", timeout=5)
         if stats.status_code != 200:
-            raise Exception("Not reachable")
+            raise Exception(f"HTTP {stats.status_code}")
         sd = stats.json()
-        st = status.json()
+        st = status.json() if status.status_code == 200 else {}
         total_q = sd.get("num_dns_queries", 0)
         blocked_q = sd.get("num_blocked_filtering", 0)
         blocked_pct = round((blocked_q / total_q * 100) if total_q > 0 else 0, 1)
@@ -375,10 +397,10 @@ def get_adguard():
             "queries": total_q,
             "blocked": blocked_q,
             "domains_blocked": sd.get("num_filters", 0),
-            "status": "enabled" if st.get("protection_enabled") else "disabled",
+            "status": "enabled" if st.get("protection_enabled", True) else "disabled",
         }
-    except:
-        return {"name": f"AdGuard Home ({ADGUARD_IP})", "ip": ADGUARD_IP, "online": False, "status": "offline"}
+    except Exception as e:
+        return {"name": f"AdGuard Home ({ADGUARD_IP})", "ip": ADGUARD_IP, "online": False, "status": "offline", "error": str(e)}
 
 # ─── DNS/Ad Blocking Summary ─────────────────────────────────
 
@@ -492,9 +514,35 @@ def api_dashboard():
         entities = ha_get("/states")
         power_entities = [e for e in entities if e.get("attributes", {}).get("unit_of_measurement") == "W"]
         total_w = sum(float(e["state"]) for e in power_entities if e["state"] not in ["unknown", "unavailable"])
-        result["power"] = {"total_watts": total_w, "active_devices": len(power_entities)}
+        active_devices = [{"name": e["attributes"].get("friendly_name", e["entity_id"]), "entity": e["entity_id"], "watts": float(e["state"]), "room": _guess_room(e["entity_id"], e.get("attributes", {}))} for e in power_entities if e["state"] not in ["unknown", "unavailable"]]
+        active_devices.sort(key=lambda x: x["watts"], reverse=True)
+        result["power"] = {"total_watts": total_w, "active_devices": len(active_devices), "devices": active_devices}
     except:
-        result["power"] = {"total_watts": 0, "active_devices": 0}
+        result["power"] = {"total_watts": 0, "active_devices": 0, "devices": []}
+    
+    try:
+        entities2 = ha_get("/states")
+        temp_sensors = []
+        for e in entities2:
+            eid = e.get("entity_id", "").lower()
+            attrs = e.get("attributes", {})
+            unit = attrs.get("unit_of_measurement", "")
+            if ("temperature" in eid or "temp" in eid) and unit in ["°C", "°F", "C", "F"]:
+                try:
+                    val = float(e["state"])
+                    temp_sensors.append({
+                        "name": attrs.get("friendly_name", e["entity_id"]),
+                        "entity": e["entity_id"],
+                        "value": val,
+                        "unit": unit,
+                        "room": _guess_room(eid, attrs),
+                    })
+                except:
+                    pass
+        temp_sensors.sort(key=lambda x: x["value"])
+        result["environment"] = {"temp_sensors": temp_sensors}
+    except:
+        result["environment"] = {"temp_sensors": []}
     
     try:
         health = unifi_get("/stat/health")
